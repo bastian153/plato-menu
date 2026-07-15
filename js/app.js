@@ -1,0 +1,1194 @@
+(function () {
+  const state = {
+    lang: localStorage.getItem("plato_lang") || detectLang(),
+    view: "home",
+    category: "all",
+    modal: null,
+    photoIndex: 0,
+    adminTab: "stats",
+    help: { hunger: null, spice: null, pref: null },
+    menu: null,
+    settings: null,
+    account: null,
+    editDish: null,
+    translateProgress: null,
+    stats: { scans: 128, nonEn: 47, topDish: "al-pastor" },
+  };
+
+  function detectLang() {
+    const n = (navigator.language || "en").toLowerCase();
+    const code = n.split("-")[0];
+    return PLATO_LANG_CODES.includes(code) ? code : "en";
+  }
+
+  function t(key) {
+    return platoT(state.lang, key);
+  }
+
+  function enabledLangs() {
+    return state.settings.enabledLangs.filter((c) => PLATO_LANG_CODES.includes(c));
+  }
+
+  function primaryLang() {
+    return state.settings.primaryLang || "en";
+  }
+
+  function loc(map) {
+    if (!map) return "";
+    if (typeof map === "string") return map;
+    return (
+      map[state.lang] ||
+      map[primaryLang()] ||
+      map.en ||
+      map.es ||
+      Object.values(map).find(Boolean) ||
+      ""
+    );
+  }
+
+  function dishName(d) {
+    return loc(d.name);
+  }
+
+  function dishDesc(d) {
+    return loc(d.desc);
+  }
+
+  function catLabel(c) {
+    return loc(c.labels || c);
+  }
+
+  function $(sel, root = document) {
+    return root.querySelector(sel);
+  }
+
+  function $all(sel, root = document) {
+    return [...root.querySelectorAll(sel)];
+  }
+
+  function toast(msg) {
+    const el = $("#toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("show"), 2200);
+  }
+
+  function persist() {
+    PlatoStorage.saveMenu(state.menu);
+    PlatoStorage.saveSettings(state.settings);
+  }
+
+  function initData() {
+    state.settings = PlatoStorage.loadSettings();
+    state.account = PlatoStorage.loadAccount();
+    const saved = PlatoStorage.loadMenu();
+    if (saved && saved.dishes) {
+      state.menu = saved;
+    } else {
+      state.menu = JSON.parse(JSON.stringify(PLATO_SEED));
+      persist();
+    }
+    if (state.account && state.account.restaurantName) {
+      state.menu.restaurant.name = state.account.restaurantName;
+    }
+  }
+
+  function setLang(lang) {
+    state.lang = lang;
+    localStorage.setItem("plato_lang", lang);
+    const meta = PLATO_LANGS.find((l) => l.code === lang);
+    document.documentElement.lang = lang;
+    document.documentElement.dir = meta && meta.dir === "rtl" ? "rtl" : "ltr";
+    render();
+  }
+
+  function setView(view) {
+    state.view = view;
+    location.hash = view === "home" ? "" : view;
+    state.modal = null;
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  function parseHash() {
+    const h = (location.hash || "#").replace("#", "").replace(/^\//, "");
+    if (h === "menu" || h === "admin") state.view = h;
+    else state.view = "home";
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  /* ---- image compress ---- */
+  function readImageFile(file) {
+    return new Promise((resolve, reject) => {
+      if (!file || !file.type.startsWith("image/")) {
+        reject(new Error("not image"));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const max = 900;
+          let w = img.width;
+          let h = img.height;
+          if (w > max || h > max) {
+            const r = Math.min(max / w, max / h);
+            w = Math.round(w * r);
+            h = Math.round(h * r);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        };
+        img.onerror = reject;
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /* ---------- RENDER ---------- */
+  function render() {
+    renderChrome();
+    $all(".view").forEach((v) => v.classList.remove("active"));
+    const map = { home: "#view-home", menu: "#view-menu", admin: "#view-admin" };
+    const el = $(map[state.view] || map.home);
+    if (el) el.classList.add("active");
+
+    if (state.view === "home") renderHome();
+    if (state.view === "menu") renderMenu();
+    if (state.view === "admin") renderAdmin();
+
+    if (state.modal === "dish") renderDishModal();
+    else if (state.modal === "help") renderHelpModal();
+    else if (state.modal === "edit") renderEditModal();
+    else {
+      $("#modal-root").classList.remove("open");
+      $("#modal-root").innerHTML = "";
+    }
+  }
+
+  function renderChrome() {
+    const switchEl = $(".lang-switch");
+    if (switchEl) {
+      const langs = enabledLangs();
+      // compact: select if many langs
+      switchEl.innerHTML = `
+        <label class="lang-select-wrap">
+          <span class="sr-only">Language</span>
+          <select id="lang-select" class="lang-select" aria-label="Language">
+            ${PLATO_LANGS.filter((l) => langs.includes(l.code) || l.code === state.lang)
+              .map(
+                (l) =>
+                  `<option value="${l.code}" ${l.code === state.lang ? "selected" : ""}>${escapeHtml(l.native)}</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+      `;
+      // ensure current lang in list
+      const sel = $("#lang-select");
+      if (sel && !langs.includes(state.lang)) {
+        // still show current
+      }
+      sel.onchange = () => setLang(sel.value);
+    }
+
+    $all("[data-nav]").forEach((a) => {
+      a.classList.toggle("active", a.dataset.nav === state.view);
+      if (a.dataset.i18n) {
+        const span = a.querySelector("[data-i18n]") || a;
+        if (a.dataset.i18n === "navHome" && a.classList.contains("brand")) {
+          const label = a.querySelector(".brand-label");
+          if (label) label.textContent = t("navHome");
+        } else if (a.dataset.i18n) {
+          a.textContent = t(a.dataset.i18n);
+        }
+      }
+    });
+    const brandLabel = $(".brand-label");
+    if (brandLabel) brandLabel.textContent = t("navHome");
+    const navMenu = $('[data-nav="menu"]');
+    if (navMenu) navMenu.textContent = t("navMenu");
+    const navAdmin = $('[data-nav="admin"]');
+    if (navAdmin) navAdmin.textContent = t("navAdmin");
+  }
+
+  function renderHome() {
+    const root = $("#view-home");
+    root.innerHTML = `
+      <div class="landing">
+        <section class="hero">
+          <div class="hero-badge">🌮 Plato · ${enabledLangs().length} languages</div>
+          <h1 id="hero-title"></h1>
+          <p>${escapeHtml(t("landingSub"))}</p>
+          <div class="cta-row">
+            <button class="btn btn-primary" data-go="menu">${escapeHtml(t("ctaGuest"))}</button>
+            <button class="btn btn-ghost" data-go="admin">${escapeHtml(t("ctaOwner"))}</button>
+          </div>
+          <div class="phone-mock" aria-hidden="true">
+            <img src="https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=600&q=80" alt="" />
+          </div>
+        </section>
+        <section class="features">
+          <article class="feature-card">
+            <div class="icon">🌐</div>
+            <h3>${escapeHtml(t("feature1Title"))}</h3>
+            <p>${escapeHtml(t("feature1Body"))}</p>
+          </article>
+          <article class="feature-card">
+            <div class="icon">📸</div>
+            <h3>${escapeHtml(t("feature2Title"))}</h3>
+            <p>${escapeHtml(t("feature2Body"))}</p>
+          </article>
+          <article class="feature-card">
+            <div class="icon">✨</div>
+            <h3>${escapeHtml(t("feature3Title"))}</h3>
+            <p>${escapeHtml(t("feature3Body"))}</p>
+          </article>
+        </section>
+        <section class="how">
+          <h2 class="section-title">${escapeHtml(t("howTitle"))}</h2>
+          <div class="steps">
+            <div class="step">${escapeHtml(t("how1"))}</div>
+            <div class="step">${escapeHtml(t("how2"))}</div>
+            <div class="step">${escapeHtml(t("how3"))}</div>
+            <div class="step">${escapeHtml(t("how4"))}</div>
+          </div>
+        </section>
+        <section class="pricing">
+          <h2 class="section-title">${escapeHtml(t("priceTitle"))}</h2>
+          <div class="price-cards">
+            <div class="price-card">
+              <div>${escapeHtml(t("priceTruck"))}</div>
+              <div class="amt">$39<small>/mo</small></div>
+            </div>
+            <div class="price-card featured">
+              <div>${escapeHtml(t("priceRest"))}</div>
+              <div class="amt">$99<small>/mo</small></div>
+            </div>
+          </div>
+          <p class="price-note">${escapeHtml(t("priceNote"))}</p>
+        </section>
+        <div class="lang-cloud">
+          ${PLATO_LANGS.map((l) => `<span class="lang-chip ${enabledLangs().includes(l.code) ? "on" : ""}">${escapeHtml(l.native)}</span>`).join("")}
+        </div>
+        <p class="site-footer">${escapeHtml(t("footer"))}</p>
+      </div>
+    `;
+    const h1 = $("#hero-title");
+    const raw = t("landingTitle");
+    h1.innerHTML = escapeHtml(raw)
+      .replace("language", "<span>language</span>")
+      .replace("idioma", "<span>idioma</span>");
+    root.querySelectorAll("[data-go]").forEach((btn) => {
+      btn.addEventListener("click", () => setView(btn.dataset.go));
+    });
+  }
+
+  function renderMenu() {
+    const r = state.menu.restaurant;
+    const root = $("#view-menu");
+    const cats = state.menu.categories;
+    const dishes = state.menu.dishes.filter(
+      (d) => state.category === "all" || d.category === state.category
+    );
+
+    root.innerHTML = `
+      <div class="menu-wrap">
+        <header class="resto-header">
+          <div class="emoji">${r.emoji || "🍽️"}</div>
+          <h1>${escapeHtml(r.name)}</h1>
+          <p class="meta">${escapeHtml(loc(r.tagline))} · ${escapeHtml(loc(r.address))}</p>
+          <div class="status">${escapeHtml(loc(r.hours))}</div>
+        </header>
+        <nav class="cats">
+          <button class="cat-pill ${state.category === "all" ? "active" : ""}" data-cat="all">${escapeHtml(t("all"))}</button>
+          ${cats
+            .map(
+              (c) =>
+                `<button class="cat-pill ${state.category === c.id ? "active" : ""}" data-cat="${c.id}">${escapeHtml(catLabel(c))}</button>`
+            )
+            .join("")}
+        </nav>
+        <div class="dish-list">
+          ${dishes.map((d) => dishCardHtml(d)).join("")}
+        </div>
+        <div class="help-bar">
+          <button class="btn btn-primary" id="btn-help">${escapeHtml(t("helpBtn"))}</button>
+        </div>
+      </div>
+    `;
+
+    root.querySelectorAll("[data-cat]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.category = btn.dataset.cat;
+        renderMenu();
+      });
+    });
+    root.querySelectorAll("[data-dish]").forEach((btn) => {
+      btn.addEventListener("click", () => openDish(btn.dataset.dish));
+    });
+    $("#btn-help").addEventListener("click", () => {
+      state.help = { hunger: null, spice: null, pref: null };
+      state.modal = "help";
+      renderHelpModal();
+    });
+  }
+
+  function dishCardHtml(d) {
+    const spice = "🌶️".repeat(d.spicy || 0);
+    const thumb = (d.photos && d.photos[0]) || "";
+    return `
+      <button type="button" class="dish-card ${d.soldOut ? "sold" : ""}" data-dish="${d.id}">
+        ${
+          thumb
+            ? `<img class="dish-thumb" src="${thumb}" alt="" loading="lazy" />`
+            : `<div class="dish-thumb placeholder-thumb">🍽️</div>`
+        }
+        <div class="dish-body">
+          <div class="dish-top">
+            <div class="dish-name">${escapeHtml(dishName(d))}</div>
+            <div class="dish-price">$${Number(d.price).toFixed(2)}</div>
+          </div>
+          <p class="dish-desc">${escapeHtml(dishDesc(d))}</p>
+          <div class="dish-meta">
+            ${d.popular ? `<span class="badge popular">${escapeHtml(t("popular"))}</span>` : ""}
+            ${d.soldOut ? `<span class="badge sold">${escapeHtml(t("soldOut"))}</span>` : ""}
+            ${d.spicy ? `<span class="badge">${escapeHtml(t("spicy"))} ${spice}</span>` : ""}
+            <span class="badge photos">📸 ${d.photoCount || (d.photos || []).length} ${escapeHtml(t("photos"))}</span>
+          </div>
+        </div>
+      </button>
+    `;
+  }
+
+  function openDish(id) {
+    const d = state.menu.dishes.find((x) => x.id === id);
+    if (!d) return;
+    state.modal = "dish";
+    state.photoIndex = 0;
+    state._dish = d;
+    renderDishModal();
+  }
+
+  function renderDishModal() {
+    const d = state._dish;
+    if (!d) return;
+    const root = $("#modal-root");
+    root.classList.add("open");
+    const photos = d.photos && d.photos.length ? d.photos : [];
+    const idx = photos.length ? state.photoIndex % photos.length : 0;
+    const label =
+      !photos.length
+        ? t("noPhoto")
+        : idx === 0
+          ? t("official")
+          : `${t("guestPhotos")} · ${idx}/${photos.length - 1}`;
+
+    root.innerHTML = `
+      <div class="modal-sheet" role="dialog" aria-modal="true">
+        <div class="modal-carousel">
+          <button class="modal-close" id="modal-x" aria-label="Close">×</button>
+          <span class="photo-label">${escapeHtml(label)}</span>
+          ${
+            photos.length
+              ? `<img src="${photos[idx]}" alt="${escapeHtml(dishName(d))}" />`
+              : `<div class="no-photo-lg">🍽️</div>`
+          }
+          ${
+            photos.length > 1
+              ? `<div class="carousel-nav">
+                  <button type="button" id="photo-prev">‹</button>
+                  <button type="button" id="photo-next">›</button>
+                </div>
+                <div class="carousel-dots">${photos.map((_, i) => `<span class="${i === idx ? "on" : ""}"></span>`).join("")}</div>`
+              : ""
+          }
+        </div>
+        <div class="modal-body">
+          <div class="dish-meta" style="margin-bottom:0.5rem">
+            ${d.popular ? `<span class="badge popular">${escapeHtml(t("popular"))}</span>` : ""}
+            ${d.soldOut ? `<span class="badge sold">${escapeHtml(t("soldOut"))}</span>` : ""}
+          </div>
+          <h2>${escapeHtml(dishName(d))}</h2>
+          <div class="modal-price">$${Number(d.price).toFixed(2)}</div>
+          <p class="modal-desc">${escapeHtml(dishDesc(d))}</p>
+          <div class="modal-section">
+            <strong>${escapeHtml(t("allergens"))}</strong>
+            <span>${escapeHtml(loc(d.allergens) || "—")}</span>
+          </div>
+          ${d.soldOut ? "" : `<div class="order-hint">${escapeHtml(t("orderHint"))}</div>`}
+        </div>
+      </div>
+    `;
+    $("#modal-x").onclick = closeModal;
+    root.onclick = (e) => {
+      if (e.target === root) closeModal();
+    };
+    const prev = $("#photo-prev");
+    const next = $("#photo-next");
+    if (prev) {
+      prev.onclick = (e) => {
+        e.stopPropagation();
+        state.photoIndex = (state.photoIndex - 1 + photos.length) % photos.length;
+        renderDishModal();
+      };
+    }
+    if (next) {
+      next.onclick = (e) => {
+        e.stopPropagation();
+        state.photoIndex = (state.photoIndex + 1) % photos.length;
+        renderDishModal();
+      };
+    }
+  }
+
+  function renderHelpModal() {
+    const root = $("#modal-root");
+    root.classList.add("open");
+    const h = state.help;
+    const ready = h.hunger && h.spice && h.pref;
+    let suggestion = ready ? suggestDish(h) : null;
+
+    root.innerHTML = `
+      <div class="modal-sheet" role="dialog">
+        <div class="modal-body" style="padding-top:1.25rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+            <h2 style="font-family:var(--display);font-size:1.35rem">${escapeHtml(t("helpTitle"))}</h2>
+            <button class="btn btn-ghost btn-sm" id="modal-x">${escapeHtml(t("helpClose"))}</button>
+          </div>
+          <div class="help-steps">
+            ${helpBlock("hunger", t("helpQ1"), [
+              ["light", t("helpLight")],
+              ["full", t("helpFull")],
+            ])}
+            ${helpBlock("spice", t("helpQ2"), [
+              ["mild", t("helpMild")],
+              ["hot", t("helpHot")],
+            ])}
+            ${helpBlock("pref", t("helpQ3"), [
+              ["meat", t("helpMeat")],
+              ["veg", t("helpVeg")],
+            ])}
+            ${
+              suggestion
+                ? `<div class="help-result">
+                    <div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.35rem">${escapeHtml(t("helpResult"))}</div>
+                    <strong style="font-size:1.15rem">${escapeHtml(dishName(suggestion))}</strong>
+                    <p style="color:var(--muted);font-size:0.9rem;margin:0.35rem 0 0.75rem">${escapeHtml(dishDesc(suggestion))}</p>
+                    <button class="btn btn-primary btn-sm" id="see-suggest">${escapeHtml(t("seeDish"))}</button>
+                  </div>`
+                : ""
+            }
+          </div>
+        </div>
+      </div>
+    `;
+
+    function helpBlock(key, q, opts) {
+      return `<div>
+        <div class="help-q">${escapeHtml(q)}</div>
+        <div class="help-options">
+          ${opts
+            .map(
+              ([val, label]) =>
+                `<button type="button" data-help="${key}" data-val="${val}" class="${h[key] === val ? "selected" : ""}">${escapeHtml(label)}</button>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+    }
+
+    $("#modal-x").onclick = closeModal;
+    root.onclick = (e) => {
+      if (e.target === root) closeModal();
+    };
+    root.querySelectorAll("[data-help]").forEach((btn) => {
+      btn.onclick = () => {
+        state.help[btn.dataset.help] = btn.dataset.val;
+        renderHelpModal();
+      };
+    });
+    const see = $("#see-suggest");
+    if (see && suggestion) {
+      see.onclick = () => openDish(suggestion.id);
+    }
+  }
+
+  function suggestDish(h) {
+    let pool = state.menu.dishes.filter((d) => !d.soldOut);
+    if (h.hunger === "light") pool = pool.filter((d) => d.category === "tacos" || d.category === "sides");
+    if (h.hunger === "full") pool = pool.filter((d) => d.category === "bowls" || d.price >= 4.5);
+    if (h.spice === "mild") pool = pool.filter((d) => (d.spicy || 0) <= 1);
+    if (h.spice === "hot") pool = pool.filter((d) => (d.spicy || 0) >= 2);
+    if (h.pref === "veg") {
+      pool = pool.filter((d) => (d.tags && d.tags.en || []).some((x) => /veggie|drink|side/i.test(x)));
+    }
+    if (h.pref === "meat") {
+      pool = pool.filter(
+        (d) => !(d.tags && d.tags.en || []).some((x) => /veggie/i.test(x)) && d.category !== "sides"
+      );
+    }
+    if (!pool.length) pool = state.menu.dishes.filter((d) => !d.soldOut && d.popular);
+    return pool[0] || state.menu.dishes[0];
+  }
+
+  function closeModal() {
+    state.modal = null;
+    state._dish = null;
+    state.editDish = null;
+    $("#modal-root").classList.remove("open");
+    $("#modal-root").innerHTML = "";
+  }
+
+  /* ---------- ADMIN ---------- */
+  function renderAdmin() {
+    const root = $("#view-admin");
+    const top = state.menu.dishes.find((d) => d.id === state.stats.topDish);
+
+    root.innerHTML = `
+      <div class="admin-wrap">
+        <h1>${escapeHtml(t("adminTitle"))}</h1>
+        <p class="admin-sub">${escapeHtml(t("adminSub"))}</p>
+        <p class="admin-hint">${escapeHtml(t("saveHint"))}</p>
+
+        <div class="admin-tabs">
+          ${tabBtn("stats", t("adminStats"))}
+          ${tabBtn("menu", t("adminMenu"))}
+          ${tabBtn("add", t("adminAdd"))}
+          ${tabBtn("photos", t("adminPhotos"))}
+          ${tabBtn("langs", t("adminLangs"))}
+          ${tabBtn("qr", t("adminQr"))}
+          ${tabBtn("account", t("adminAccount"))}
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "stats" ? "active" : ""}">
+          <div class="stat-grid">
+            <div class="stat"><div class="n">${state.stats.scans}</div><div class="l">${escapeHtml(t("scans"))}</div></div>
+            <div class="stat"><div class="n">${state.stats.nonEn}%</div><div class="l">${escapeHtml(t("langEs"))}</div></div>
+            <div class="stat"><div class="n" style="font-size:0.95rem;padding-top:0.25rem">${escapeHtml(top ? dishName(top) : "—")}</div><div class="l">${escapeHtml(t("topDish"))}</div></div>
+          </div>
+          <button class="btn btn-primary" data-go="menu" style="width:100%">${escapeHtml(t("backMenu"))}</button>
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "menu" ? "active" : ""}">
+          ${state.menu.dishes
+            .map(
+              (d) => `
+            <div class="admin-dish">
+              ${d.photos && d.photos[0] ? `<img src="${d.photos[0]}" alt="" />` : `<div class="admin-thumb-ph">🍽️</div>`}
+              <div class="info">
+                <strong>${escapeHtml(dishName(d))}</strong>
+                <span>$${Number(d.price).toFixed(2)} · ${d.soldOut ? t("soldOut") : t("available")}</span>
+              </div>
+              <div class="admin-actions">
+                <button class="btn btn-sm btn-ghost" data-edit="${d.id}">✎</button>
+                <button class="btn btn-sm ${d.soldOut ? "btn-good" : "btn-danger"}" data-toggle-sold="${d.id}">
+                  ${escapeHtml(d.soldOut ? t("toggleAvail") : t("toggleSold"))}
+                </button>
+              </div>
+            </div>`
+            )
+            .join("")}
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "add" ? "active" : ""}">
+          ${renderAddFormHtml()}
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "photos" ? "active" : ""}">
+          <p style="color:var(--muted);font-size:0.9rem;margin-bottom:0.75rem">${escapeHtml(t("pending"))}</p>
+          ${(state.menu.pendingPhotos || []).length
+            ? (state.menu.pendingPhotos || [])
+                .map((p) => {
+                  const d = state.menu.dishes.find((x) => x.id === p.dishId);
+                  return `<div class="photo-queue-item">
+                    <img src="${p.url}" alt="" />
+                    <div><strong>${escapeHtml(d ? dishName(d) : p.dishId)}</strong></div>
+                    <div style="display:flex;flex-direction:column;gap:0.35rem">
+                      <button class="btn btn-sm btn-good" data-approve="${p.id}">${escapeHtml(t("approve"))}</button>
+                      <button class="btn btn-sm btn-danger" data-reject="${p.id}">${escapeHtml(t("reject"))}</button>
+                    </div>
+                  </div>`;
+                })
+                .join("")
+            : `<p style="color:var(--muted)">✨</p>`}
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "langs" ? "active" : ""}">
+          <h3 style="margin-bottom:0.5rem">${escapeHtml(t("enabledLangs"))}</h3>
+          <p style="color:var(--muted);font-size:0.9rem;margin-bottom:1rem">${escapeHtml(t("enabledHint"))}</p>
+          <div class="lang-toggles">
+            ${PLATO_LANGS.map(
+              (l) => `
+              <label class="lang-toggle">
+                <input type="checkbox" data-enable-lang="${l.code}" ${enabledLangs().includes(l.code) ? "checked" : ""} />
+                <span>${escapeHtml(l.native)} <small>${escapeHtml(l.name)}</small></span>
+              </label>`
+            ).join("")}
+          </div>
+          <label class="field" style="margin-top:1.25rem">
+            <span>${escapeHtml(t("primaryLang"))}</span>
+            <select id="primary-lang">
+              ${PLATO_LANGS.map(
+                (l) =>
+                  `<option value="${l.code}" ${primaryLang() === l.code ? "selected" : ""}>${escapeHtml(l.native)}</option>`
+              ).join("")}
+            </select>
+          </label>
+          <p class="source-note">${escapeHtml(t("sourceNote"))}</p>
+          <button class="btn btn-primary" id="fill-missing" style="width:100%;margin-top:1rem">${escapeHtml(t("fillMissing"))}</button>
+          <div id="fill-progress" class="progress-line hidden"></div>
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "qr" ? "active" : ""}">
+          <div class="qr-box">
+            <strong>${escapeHtml(state.menu.restaurant.name)}</strong>
+            <div class="qr-fake"></div>
+            <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">plato.app/m/${escapeHtml(state.menu.restaurant.id)}</p>
+            <button class="btn btn-primary btn-sm" id="copy-link">${escapeHtml(t("copyQr"))}</button>
+          </div>
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "account" ? "active" : ""}">
+          ${renderAccountHtml()}
+        </div>
+      </div>
+    `;
+
+    function tabBtn(id, label) {
+      return `<button data-atab="${id}" class="${state.adminTab === id ? "active" : ""}">${escapeHtml(label)}</button>`;
+    }
+
+    bindAdminEvents(root);
+  }
+
+  function renderAddFormHtml() {
+    const draft = state.editDish || emptyDraft();
+    const src = draft._sourceLang || primaryLang();
+    const srcName = (draft.name && draft.name[src]) || "";
+    const srcDesc = (draft.desc && draft.desc[src]) || "";
+    const progress = state.translateProgress;
+
+    return `
+      <form id="dish-form" class="dish-form">
+        <h3 style="margin-bottom:0.75rem">${escapeHtml(draft.id ? t("editDish") : t("addDish"))}</h3>
+        <p class="source-note">${escapeHtml(t("sourceNote"))}</p>
+
+        <label class="field">
+          <span>${escapeHtml(t("primaryLang"))}</span>
+          <select name="sourceLang" id="source-lang">
+            ${PLATO_LANGS.map(
+              (l) =>
+                `<option value="${l.code}" ${src === l.code ? "selected" : ""}>${escapeHtml(l.native)}</option>`
+            ).join("")}
+          </select>
+        </label>
+
+        <label class="field">
+          <span>${escapeHtml(t("dishName"))}</span>
+          <input name="name" id="f-name" required value="${escapeHtml(srcName)}" placeholder="Al Pastor" />
+        </label>
+
+        <label class="field">
+          <span>${escapeHtml(t("dishDesc"))}</span>
+          <textarea name="desc" id="f-desc" rows="3" required placeholder="Marinated pork, pineapple...">${escapeHtml(srcDesc)}</textarea>
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span>${escapeHtml(t("dishPrice"))}</span>
+            <input name="price" id="f-price" type="number" step="0.25" min="0" value="${draft.price ?? 5}" />
+          </label>
+          <label class="field">
+            <span>${escapeHtml(t("dishSpicy"))}</span>
+            <input name="spicy" id="f-spicy" type="number" min="0" max="3" value="${draft.spicy ?? 0}" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span>${escapeHtml(t("dishCategory"))}</span>
+          <select name="category" id="f-cat">
+            ${state.menu.categories
+              .map(
+                (c) =>
+                  `<option value="${c.id}" ${draft.category === c.id ? "selected" : ""}>${escapeHtml(catLabel(c))}</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+
+        <label class="field">
+          <span>${escapeHtml(t("dishPhoto"))}</span>
+          <input type="file" id="f-photo" accept="image/*" capture="environment" />
+          <span class="field-hint">${escapeHtml(t("uploadHint"))}</span>
+        </label>
+        <div id="photo-preview" class="photo-preview ${draft.photos && draft.photos[0] ? "" : "hidden"}">
+          ${draft.photos && draft.photos[0] ? `<img src="${draft.photos[0]}" alt="" />` : ""}
+        </div>
+
+        <button type="button" class="btn btn-ghost" id="btn-translate" style="width:100%;margin:0.5rem 0">
+          🌐 ${escapeHtml(progress ? t("translating") : t("translateAll"))}
+        </button>
+        <div id="translate-progress" class="progress-line ${progress ? "" : "hidden"}">
+          <div class="progress-bar" style="width:${progress ? progress.pct : 0}%"></div>
+          <span>${progress ? progress.label : ""}</span>
+        </div>
+
+        <details class="lang-review" id="lang-review" ${draft._translated ? "open" : ""}>
+          <summary>${escapeHtml(t("reviewLangs"))}</summary>
+          <div id="lang-fields">
+            ${enabledLangs()
+              .map((code) => {
+                const L = PLATO_LANGS.find((x) => x.code === code);
+                const n = (draft.name && draft.name[code]) || "";
+                const d = (draft.desc && draft.desc[code]) || "";
+                return `
+                <div class="lang-edit-block">
+                  <div class="lang-edit-title">${escapeHtml(L.native)} ${!n ? `<em class="miss">${escapeHtml(t("missingLang"))}</em>` : ""}</div>
+                  <input data-lang-name="${code}" value="${escapeHtml(n)}" placeholder="Name" />
+                  <textarea data-lang-desc="${code}" rows="2" placeholder="Description">${escapeHtml(d)}</textarea>
+                </div>`;
+              })
+              .join("")}
+          </div>
+        </details>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">${escapeHtml(t("saveDish"))}</button>
+          ${
+            draft.id
+              ? `<button type="button" class="btn btn-danger" id="btn-delete">${escapeHtml(t("deleteDish"))}</button>`
+              : ""
+          }
+        </div>
+      </form>
+    `;
+  }
+
+  function emptyDraft() {
+    return {
+      id: null,
+      category: "tacos",
+      price: 5,
+      spicy: 0,
+      popular: false,
+      soldOut: false,
+      name: {},
+      desc: {},
+      allergens: { en: "None common", es: "Sin alérgenos comunes" },
+      tags: { en: [], es: [] },
+      photos: [],
+      photoCount: 0,
+      _sourceLang: primaryLang(),
+      _translated: false,
+    };
+  }
+
+  function renderAccountHtml() {
+    const a = state.account || {};
+    return `
+      <form id="account-form" class="dish-form">
+        <h3>${escapeHtml(t("loginTitle"))}</h3>
+        <p class="source-note">${escapeHtml(t("loginSub"))}</p>
+        <label class="field">
+          <span>${escapeHtml(t("restName"))}</span>
+          <input name="restaurantName" value="${escapeHtml(a.restaurantName || state.menu.restaurant.name)}" required />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(t("ownerEmail"))}</span>
+          <input name="email" type="email" value="${escapeHtml(a.email || "")}" placeholder="you@restaurant.com" required />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(t("password"))}</span>
+          <input name="password" type="password" value="${escapeHtml(a.password || "")}" placeholder="••••••••" />
+        </label>
+        <button type="submit" class="btn btn-primary" style="width:100%">${escapeHtml(t("signIn"))}</button>
+        ${
+          a.email
+            ? `<button type="button" class="btn btn-ghost" id="sign-out" style="width:100%;margin-top:0.5rem">${escapeHtml(t("signOut"))}</button>`
+            : ""
+        }
+      </form>
+    `;
+  }
+
+  function bindAdminEvents(root) {
+    root.querySelectorAll("[data-atab]").forEach((b) => {
+      b.onclick = () => {
+        state.adminTab = b.dataset.atab;
+        if (b.dataset.atab === "add" && !state.editDish) state.editDish = emptyDraft();
+        if (b.dataset.atab !== "add") state.editDish = null;
+        renderAdmin();
+      };
+    });
+    root.querySelectorAll("[data-go]").forEach((b) => {
+      b.onclick = () => setView(b.dataset.go);
+    });
+    root.querySelectorAll("[data-toggle-sold]").forEach((b) => {
+      b.onclick = () => {
+        const d = state.menu.dishes.find((x) => x.id === b.dataset.toggleSold);
+        if (d) {
+          d.soldOut = !d.soldOut;
+          persist();
+          toast(d.soldOut ? t("soldOut") : t("available"));
+          renderAdmin();
+        }
+      };
+    });
+    root.querySelectorAll("[data-edit]").forEach((b) => {
+      b.onclick = () => {
+        const d = state.menu.dishes.find((x) => x.id === b.dataset.edit);
+        if (!d) return;
+        state.editDish = JSON.parse(JSON.stringify(d));
+        state.editDish._sourceLang = primaryLang();
+        state.editDish._translated = true;
+        state.adminTab = "add";
+        renderAdmin();
+      };
+    });
+    root.querySelectorAll("[data-approve]").forEach((b) => {
+      b.onclick = () => {
+        const p = (state.menu.pendingPhotos || []).find((x) => x.id === b.dataset.approve);
+        if (!p) return;
+        const d = state.menu.dishes.find((x) => x.id === p.dishId);
+        if (d) {
+          d.photos = d.photos || [];
+          d.photos.push(p.url);
+          d.photoCount = (d.photoCount || 0) + 1;
+        }
+        state.menu.pendingPhotos = state.menu.pendingPhotos.filter((x) => x.id !== p.id);
+        persist();
+        toast(t("approve"));
+        renderAdmin();
+      };
+    });
+    root.querySelectorAll("[data-reject]").forEach((b) => {
+      b.onclick = () => {
+        state.menu.pendingPhotos = (state.menu.pendingPhotos || []).filter(
+          (x) => x.id !== b.dataset.reject
+        );
+        persist();
+        toast(t("reject"));
+        renderAdmin();
+      };
+    });
+    root.querySelectorAll("[data-enable-lang]").forEach((cb) => {
+      cb.onchange = () => {
+        const code = cb.dataset.enableLang;
+        let list = [...enabledLangs()];
+        if (cb.checked) {
+          if (!list.includes(code)) list.push(code);
+        } else {
+          list = list.filter((c) => c !== code);
+          if (!list.length) list = ["en"];
+        }
+        state.settings.enabledLangs = list;
+        PlatoStorage.saveSettings(state.settings);
+        renderAdmin();
+      };
+    });
+    const prim = $("#primary-lang");
+    if (prim) {
+      prim.onchange = () => {
+        state.settings.primaryLang = prim.value;
+        PlatoStorage.saveSettings(state.settings);
+      };
+    }
+    const fill = $("#fill-missing");
+    if (fill) {
+      fill.onclick = () => fillAllMissingTranslations();
+    }
+    const copy = $("#copy-link");
+    if (copy) {
+      copy.onclick = async () => {
+        const url = location.origin + location.pathname + "#menu";
+        try {
+          await navigator.clipboard.writeText(url);
+          toast(t("copied"));
+        } catch {
+          toast(url);
+        }
+      };
+    }
+
+    // account form
+    const accForm = $("#account-form");
+    if (accForm) {
+      accForm.onsubmit = (e) => {
+        e.preventDefault();
+        const fd = new FormData(accForm);
+        const acc = {
+          restaurantName: String(fd.get("restaurantName") || "").trim(),
+          email: String(fd.get("email") || "").trim(),
+          password: String(fd.get("password") || ""),
+        };
+        state.account = acc;
+        PlatoStorage.saveAccount(acc);
+        state.menu.restaurant.name = acc.restaurantName;
+        persist();
+        toast(t("accountSaved"));
+        renderAdmin();
+      };
+    }
+    const so = $("#sign-out");
+    if (so) {
+      so.onclick = () => {
+        PlatoStorage.clearAccount();
+        state.account = null;
+        toast(t("signOut"));
+        renderAdmin();
+      };
+    }
+
+    // dish form
+    bindDishForm();
+  }
+
+  function bindDishForm() {
+    const form = $("#dish-form");
+    if (!form) return;
+    const draft = state.editDish || emptyDraft();
+
+    $("#f-photo") &&
+      ($("#f-photo").onchange = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try {
+          const dataUrl = await readImageFile(file);
+          draft.photos = [dataUrl, ...(draft.photos || []).filter((p) => p !== dataUrl)];
+          state.editDish = draft;
+          const prev = $("#photo-preview");
+          prev.classList.remove("hidden");
+          prev.innerHTML = `<img src="${dataUrl}" alt="" />`;
+          toast("📷");
+        } catch {
+          toast("Image error");
+        }
+      });
+
+    $("#source-lang") &&
+      ($("#source-lang").onchange = (e) => {
+        draft._sourceLang = e.target.value;
+        state.editDish = draft;
+      });
+
+    $("#btn-translate") &&
+      ($("#btn-translate").onclick = async () => {
+        await runTranslate(draft);
+      });
+
+    $("#btn-delete") &&
+      ($("#btn-delete").onclick = () => {
+        if (!draft.id) return;
+        state.menu.dishes = state.menu.dishes.filter((d) => d.id !== draft.id);
+        persist();
+        state.editDish = null;
+        state.adminTab = "menu";
+        toast(t("deleteDish"));
+        renderAdmin();
+      });
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      await saveDishFromForm(draft);
+    };
+  }
+
+  function collectLangFields(draft, sourceLang, name, desc) {
+    draft.name = draft.name || {};
+    draft.desc = draft.desc || {};
+    draft.name[sourceLang] = name;
+    draft.desc[sourceLang] = desc;
+    $all("[data-lang-name]").forEach((inp) => {
+      draft.name[inp.dataset.langName] = inp.value.trim();
+    });
+    $all("[data-lang-desc]").forEach((ta) => {
+      draft.desc[ta.dataset.langDesc] = ta.value.trim();
+    });
+  }
+
+  async function runTranslate(draft) {
+    const sourceLang = ($("#source-lang") && $("#source-lang").value) || primaryLang();
+    const name = ($("#f-name") && $("#f-name").value.trim()) || "";
+    const desc = ($("#f-desc") && $("#f-desc").value.trim()) || "";
+    if (!name) {
+      toast(t("needName"));
+      return;
+    }
+    if (!desc) {
+      toast(t("needDesc"));
+      return;
+    }
+
+    const langs = enabledLangs();
+    state.translateProgress = { pct: 5, label: t("translating") };
+    state.editDish = draft;
+    renderAdmin();
+
+    try {
+      const { name: nameMap, desc: descMap } = await PlatoTranslate.translateDishFields({
+        name,
+        desc,
+        fromLang: sourceLang,
+        toLangs: langs,
+        onProgress: (done, total) => {
+          state.translateProgress = {
+            pct: Math.round((done / total) * 100),
+            label: `${t("translating")} ${done}/${total}`,
+          };
+          const bar = $(".progress-bar");
+          const lab = $("#translate-progress span");
+          if (bar) bar.style.width = state.translateProgress.pct + "%";
+          if (lab) lab.textContent = state.translateProgress.label;
+        },
+      });
+      draft.name = nameMap;
+      draft.desc = descMap;
+      draft._sourceLang = sourceLang;
+      draft._translated = true;
+      state.editDish = draft;
+      state.translateProgress = null;
+      toast(t("translated"));
+      renderAdmin();
+    } catch (err) {
+      console.error(err);
+      state.translateProgress = null;
+      toast(t("translateFail"));
+      renderAdmin();
+    }
+  }
+
+  async function saveDishFromForm(draft) {
+    const sourceLang = ($("#source-lang") && $("#source-lang").value) || primaryLang();
+    const name = ($("#f-name") && $("#f-name").value.trim()) || "";
+    const desc = ($("#f-desc") && $("#f-desc").value.trim()) || "";
+    if (!name) {
+      toast(t("needName"));
+      return;
+    }
+    if (!desc) {
+      toast(t("needDesc"));
+      return;
+    }
+
+    collectLangFields(draft, sourceLang, name, desc);
+
+    // If other langs empty, auto-translate before save
+    const langs = enabledLangs();
+    const missing = langs.filter((c) => !draft.name[c] || !draft.desc[c]);
+    if (missing.length) {
+      toast(t("translating"));
+      try {
+        const filled = await PlatoTranslate.translateDishFields({
+          name,
+          desc,
+          fromLang: sourceLang,
+          toLangs: langs,
+        });
+        draft.name = { ...filled.name, ...draft.name };
+        draft.desc = { ...filled.desc, ...draft.desc };
+        // prefer user edits already collected
+        collectLangFields(draft, sourceLang, name, desc);
+      } catch (e) {
+        // keep what we have; fill blanks with source
+        langs.forEach((c) => {
+          if (!draft.name[c]) draft.name[c] = name;
+          if (!draft.desc[c]) draft.desc[c] = desc;
+        });
+      }
+    }
+
+    draft.price = parseFloat($("#f-price").value) || 0;
+    draft.spicy = parseInt($("#f-spicy").value, 10) || 0;
+    draft.category = $("#f-cat").value;
+    draft.photoCount = (draft.photos || []).length;
+
+    if (!draft.id) {
+      draft.id = "dish-" + Date.now();
+      state.menu.dishes.push(draft);
+    } else {
+      const i = state.menu.dishes.findIndex((d) => d.id === draft.id);
+      if (i >= 0) state.menu.dishes[i] = draft;
+    }
+
+    // clean internal flags
+    delete draft._sourceLang;
+    delete draft._translated;
+
+    persist();
+    state.editDish = null;
+    state.adminTab = "menu";
+    toast(t("dishSaved"));
+    renderAdmin();
+  }
+
+  async function fillAllMissingTranslations() {
+    const langs = enabledLangs();
+    const from = primaryLang();
+    const prog = $("#fill-progress");
+    if (prog) {
+      prog.classList.remove("hidden");
+      prog.innerHTML = `<div class="progress-bar" style="width:0%"></div><span>${t("translating")}</span>`;
+    }
+    let i = 0;
+    const total = state.menu.dishes.length;
+    for (const d of state.menu.dishes) {
+      d.name = await PlatoTranslate.fillMissing(d.name || {}, from, langs);
+      d.desc = await PlatoTranslate.fillMissing(d.desc || {}, from, langs);
+      if (d.allergens && typeof d.allergens === "object") {
+        d.allergens = await PlatoTranslate.fillMissing(d.allergens, from, langs);
+      }
+      i++;
+      if (prog) {
+        prog.innerHTML = `<div class="progress-bar" style="width:${Math.round((i / total) * 100)}%"></div><span>${i}/${total}</span>`;
+      }
+    }
+    persist();
+    toast(t("translated"));
+    renderAdmin();
+  }
+
+  function renderEditModal() {
+    /* unused — edit is inline in admin add tab */
+  }
+
+  /* ---------- INIT ---------- */
+  function bindGlobal() {
+    $all("[data-nav]").forEach((a) => {
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        setView(a.dataset.nav);
+      });
+    });
+    window.addEventListener("hashchange", () => {
+      parseHash();
+      render();
+    });
+  }
+
+  function init() {
+    initData();
+    parseHash();
+    bindGlobal();
+    render();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();

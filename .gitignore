@@ -1,0 +1,34 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs & caches
+*.log
+npm-debug.log*
+.cache/
+dist/
+build/
+.turbo/
+.vercel/
+.netlify/
+
+# Env / secrets (future backend)
+.env
+.env.*
+!.env.example
+
+# Dependencies (if added later)
+node_modules/
+
+# Local-only
+.local/
+tmp/
+*.local.html

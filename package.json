@@ -1,0 +1,32 @@
+{
+  "name": "plato-menu",
+  "version": "0.1.0",
+  "description": "Plato — living multi-language restaurant menus with real plate photos. Write a dish once, translate to every guest language.",
+  "private": true,
+  "license": "MIT",
+  "keywords": [
+    "restaurant",
+    "menu",
+    "qr-menu",
+    "multilingual",
+    "food-truck",
+    "i18n",
+    "hospitality"
+  ],
+  "scripts": {
+    "start": "python3 -m http.server 8765",
+    "serve": "python3 -m http.server 8765",
+    "dev": "python3 -m http.server 8765"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bastian153/plato-menu.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bastian153/plato-menu/issues"
+  },
+  "homepage": "https://github.com/bastian153/plato-menu#readme",
+  "engines": {
+    "node": ">=18"
+  }
+}
