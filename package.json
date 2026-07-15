@@ -1,7 +1,7 @@
 {
   "name": "plato-menu",
-  "version": "0.1.0",
-  "description": "Plato — living multi-language restaurant menus with real plate photos. Write a dish once, translate to every guest language.",
+  "version": "0.2.0",
+  "description": "Plato — living multi-language restaurant menus with real plate photos and a real Node backend.",
   "private": true,
   "license": "MIT",
   "keywords": [
@@ -11,12 +11,23 @@
     "multilingual",
     "food-truck",
     "i18n",
-    "hospitality"
+    "hospitality",
+    "express",
+    "sqlite"
   ],
   "scripts": {
-    "start": "python3 -m http.server 8765",
-    "serve": "python3 -m http.server 8765",
-    "dev": "python3 -m http.server 8765"
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "server": "node server/index.js",
+    "static": "python3 -m http.server 8765"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.1"
   },
   "repository": {
     "type": "git",
@@ -27,6 +38,6 @@
   },
   "homepage": "https://github.com/bastian153/plato-menu#readme",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }

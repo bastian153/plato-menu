@@ -25,24 +25,40 @@ Living multi-language restaurant menus with real plate photos — not a PDF. Gue
 
 ---
 
-## Quick start
+## Quick start (real backend)
+
+Requires **Node.js 22+** (uses built-in SQLite).
 
 ```bash
 git clone https://github.com/bastian153/plato-menu.git
 cd plato-menu
+npm install
 npm start
-# or: python3 -m http.server 8765
 ```
 
 Open:
 
 | Page | URL |
 |------|-----|
-| Landing | http://127.0.0.1:8765/ |
-| Guest menu | http://127.0.0.1:8765/#menu |
-| Owner dashboard | http://127.0.0.1:8765/#admin |
+| Landing | http://127.0.0.1:3847/ |
+| Guest menu | http://127.0.0.1:3847/#menu |
+| Owner dashboard | http://127.0.0.1:3847/#admin |
+| API health | http://127.0.0.1:3847/api/health |
+| Public menu JSON | http://127.0.0.1:3847/api/public/taqueria-el-sol |
 
-No build step. No `npm install` required for the demo.
+### Demo login (seeded automatically)
+
+- **Email:** `demo@plato.menu`  
+- **Password:** `demo1234`  
+
+Full API docs: **[BACKEND.md](./BACKEND.md)**
+
+### Static-only (no API)
+
+```bash
+npm run static
+# http://127.0.0.1:8765 — localStorage mode
+```
 
 ---
 
@@ -99,22 +115,12 @@ If they save without translating, missing languages are still auto-filled so not
 
 ```
 plato-menu/
-├── index.html              # App shell
-├── css/styles.css          # UI
-├── js/
-│   ├── langs.js            # Languages + UI i18n
-│   ├── seed.js             # Sample taquería data
-│   ├── storage.js          # localStorage persistence
-│   ├── translate.js        # MT pipeline (MyMemory)
-│   └── app.js              # Guest + owner app
-├── assets/                 # Static assets
-├── PRODUCT.md              # Product brief
-├── SALES.md                # Pitch & GTM
-├── COMPETITIVE.md          # Market wedge
-├── TRANSLATION.md          # Translation system
-├── ROADMAP.md              # What’s next
-├── package.json
-├── LICENSE                 # MIT
+├── index.html / css / js/   # Frontend (api.js + app)
+├── server/                  # Express API + SQLite
+├── data/ · uploads/         # Runtime (gitignored)
+├── BACKEND.md               # API docs
+├── PRODUCT.md · SALES.md · TRANSLATION.md · ROADMAP.md
+├── package.json · LICENSE
 └── README.md
 ```
 
@@ -124,6 +130,7 @@ plato-menu/
 
 | Doc | Purpose |
 |-----|---------|
+| [BACKEND.md](./BACKEND.md) | API, auth, DB, demo credentials |
 | [PRODUCT.md](./PRODUCT.md) | Problem, MVP, pricing, personas |
 | [SALES.md](./SALES.md) | 2-min pitch, objections, outreach |
 | [COMPETITIVE.md](./COMPETITIVE.md) | vs PDF QR, Toast, Yelp |
@@ -134,15 +141,16 @@ plato-menu/
 
 ## Tech notes
 
-| Topic | Demo behavior |
-|-------|----------------|
-| Stack | Static HTML / CSS / JS |
-| Persistence | `localStorage` (this browser only) |
-| Translation | [MyMemory](https://mymemory.translated.net/) free API (network required) |
-| Images | File/camera → compressed JPEG data URLs |
-| Auth | Demo profile only (not production security) |
+| Topic | With `npm start` (backend) | Static fallback |
+|-------|----------------------------|-----------------|
+| Stack | Express + SQLite + HTML/JS | HTML/CSS/JS only |
+| Persistence | SQLite `data/plato.db` | `localStorage` |
+| Auth | JWT + bcrypt | Local profile |
+| Translation | `/api/translate/dish` proxy | Browser → MyMemory |
+| Images | `POST /api/me/upload` → `/uploads` | data URLs |
+| Multi-tenant | Users → restaurants by slug | Single browser |
 
-Production path: real auth, cloud DB, DeepL/Google Translate, object storage, Stripe — see [ROADMAP.md](./ROADMAP.md).
+Next: Postgres, DeepL, cloud object storage, Stripe — see [ROADMAP.md](./ROADMAP.md).
 
 ---
 

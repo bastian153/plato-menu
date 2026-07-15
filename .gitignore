@@ -25,10 +25,17 @@ build/
 .env.*
 !.env.example
 
-# Dependencies (if added later)
+# Dependencies
 node_modules/
+package-lock.json
 
 # Local-only
 .local/
 tmp/
 *.local.html
+
+# Runtime data
+data/
+uploads/
+!uploads/.gitkeep
+!data/.gitkeep

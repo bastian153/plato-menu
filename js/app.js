@@ -74,14 +74,72 @@
     toast._t = setTimeout(() => el.classList.remove("show"), 2200);
   }
 
-  function persist() {
-    PlatoStorage.saveMenu(state.menu);
-    PlatoStorage.saveSettings(state.settings);
+  function applyMenuBundle(bundle) {
+    if (!bundle) return;
+    state.menu = {
+      restaurant: bundle.restaurant,
+      categories: bundle.categories,
+      dishes: bundle.dishes,
+      pendingPhotos: bundle.pendingPhotos || [],
+    };
+    if (bundle.settings) {
+      state.settings = {
+        enabledLangs: bundle.settings.enabledLangs || state.settings.enabledLangs,
+        primaryLang: bundle.settings.primaryLang || state.settings.primaryLang,
+      };
+    }
   }
 
-  function initData() {
+  function persist() {
+    // Local offline mode only
+    if (!PlatoAPI.isApi()) {
+      PlatoStorage.saveMenu(state.menu);
+      PlatoStorage.saveSettings(state.settings);
+    }
+  }
+
+  async function initData() {
     state.settings = PlatoStorage.loadSettings();
     state.account = PlatoStorage.loadAccount();
+
+    const apiUp = await PlatoAPI.detect();
+    if (apiUp) {
+      try {
+        if (PlatoAPI.getToken()) {
+          const me = await PlatoAPI.me();
+          state.account = {
+            email: me.user.email,
+            restaurantName: (me.restaurant && me.restaurant.name) || "",
+            password: "",
+          };
+          if (me.menu) applyMenuBundle(me.menu);
+          const full = await PlatoAPI.getMyMenu();
+          applyMenuBundle(full.menu);
+          if (full.stats) {
+            state.stats = {
+              scans: full.stats.scans || 0,
+              nonEn: full.stats.nonEn || 0,
+              topDish: full.stats.topDish,
+            };
+          }
+          return;
+        }
+        // Guest / not logged in: public demo slug
+        const pub = await PlatoAPI.getPublicMenu("taqueria-el-sol", state.lang);
+        applyMenuBundle(pub.menu);
+        if (pub.stats) {
+          state.stats = {
+            scans: pub.stats.scans || 0,
+            nonEn: pub.stats.nonEn || 0,
+            topDish: pub.stats.topDish,
+          };
+        }
+        return;
+      } catch (err) {
+        console.warn("API load failed, using local seed", err);
+      }
+    }
+
     const saved = PlatoStorage.loadMenu();
     if (saved && saved.dishes) {
       state.menu = saved;
@@ -838,13 +896,22 @@
       b.onclick = () => setView(b.dataset.go);
     });
     root.querySelectorAll("[data-toggle-sold]").forEach((b) => {
-      b.onclick = () => {
+      b.onclick = async () => {
         const d = state.menu.dishes.find((x) => x.id === b.dataset.toggleSold);
-        if (d) {
-          d.soldOut = !d.soldOut;
-          persist();
-          toast(d.soldOut ? t("soldOut") : t("available"));
+        if (!d) return;
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.toggleSoldOut(d.id, !d.soldOut);
+            applyMenuBundle(res.menu);
+          } else {
+            d.soldOut = !d.soldOut;
+            persist();
+          }
+          const updated = state.menu.dishes.find((x) => x.id === d.id);
+          toast(updated && updated.soldOut ? t("soldOut") : t("available"));
           renderAdmin();
+        } catch (err) {
+          toast(err.message || "Error");
         }
       };
     });
@@ -860,33 +927,51 @@
       };
     });
     root.querySelectorAll("[data-approve]").forEach((b) => {
-      b.onclick = () => {
+      b.onclick = async () => {
         const p = (state.menu.pendingPhotos || []).find((x) => x.id === b.dataset.approve);
         if (!p) return;
-        const d = state.menu.dishes.find((x) => x.id === p.dishId);
-        if (d) {
-          d.photos = d.photos || [];
-          d.photos.push(p.url);
-          d.photoCount = (d.photoCount || 0) + 1;
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.approvePhoto(p.id);
+            applyMenuBundle(res.menu);
+          } else {
+            const d = state.menu.dishes.find((x) => x.id === p.dishId);
+            if (d) {
+              d.photos = d.photos || [];
+              d.photos.push(p.url);
+              d.photoCount = (d.photoCount || 0) + 1;
+            }
+            state.menu.pendingPhotos = state.menu.pendingPhotos.filter((x) => x.id !== p.id);
+            persist();
+          }
+          toast(t("approve"));
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Error");
         }
-        state.menu.pendingPhotos = state.menu.pendingPhotos.filter((x) => x.id !== p.id);
-        persist();
-        toast(t("approve"));
-        renderAdmin();
       };
     });
     root.querySelectorAll("[data-reject]").forEach((b) => {
-      b.onclick = () => {
-        state.menu.pendingPhotos = (state.menu.pendingPhotos || []).filter(
-          (x) => x.id !== b.dataset.reject
-        );
-        persist();
-        toast(t("reject"));
-        renderAdmin();
+      b.onclick = async () => {
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.rejectPhoto(b.dataset.reject);
+            applyMenuBundle(res.menu);
+          } else {
+            state.menu.pendingPhotos = (state.menu.pendingPhotos || []).filter(
+              (x) => x.id !== b.dataset.reject
+            );
+            persist();
+          }
+          toast(t("reject"));
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Error");
+        }
       };
     });
     root.querySelectorAll("[data-enable-lang]").forEach((cb) => {
-      cb.onchange = () => {
+      cb.onchange = async () => {
         const code = cb.dataset.enableLang;
         let list = [...enabledLangs()];
         if (cb.checked) {
@@ -896,15 +981,33 @@
           if (!list.length) list = ["en"];
         }
         state.settings.enabledLangs = list;
-        PlatoStorage.saveSettings(state.settings);
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.updateRestaurant({ enabledLangs: list });
+            applyMenuBundle(res.menu);
+          } else {
+            PlatoStorage.saveSettings(state.settings);
+          }
+        } catch (err) {
+          toast(err.message || "Error");
+        }
         renderAdmin();
       };
     });
     const prim = $("#primary-lang");
     if (prim) {
-      prim.onchange = () => {
+      prim.onchange = async () => {
         state.settings.primaryLang = prim.value;
-        PlatoStorage.saveSettings(state.settings);
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.updateRestaurant({ primaryLang: prim.value });
+            applyMenuBundle(res.menu);
+          } else {
+            PlatoStorage.saveSettings(state.settings);
+          }
+        } catch (err) {
+          toast(err.message || "Error");
+        }
       };
     }
     const fill = $("#fill-missing");
@@ -927,7 +1030,7 @@
     // account form
     const accForm = $("#account-form");
     if (accForm) {
-      accForm.onsubmit = (e) => {
+      accForm.onsubmit = async (e) => {
         e.preventDefault();
         const fd = new FormData(accForm);
         const acc = {
@@ -935,19 +1038,70 @@
           email: String(fd.get("email") || "").trim(),
           password: String(fd.get("password") || ""),
         };
-        state.account = acc;
-        PlatoStorage.saveAccount(acc);
-        state.menu.restaurant.name = acc.restaurantName;
-        persist();
-        toast(t("accountSaved"));
-        renderAdmin();
+        try {
+          if (PlatoAPI.isApi()) {
+            let data;
+            try {
+              data = await PlatoAPI.login({
+                email: acc.email,
+                password: acc.password,
+              });
+            } catch (loginErr) {
+              if (loginErr.status === 401) {
+                data = await PlatoAPI.register({
+                  email: acc.email,
+                  password: acc.password || "demo1234",
+                  restaurantName: acc.restaurantName,
+                  name: acc.restaurantName,
+                });
+              } else {
+                throw loginErr;
+              }
+            }
+            state.account = {
+              email: data.user.email,
+              restaurantName: (data.restaurant && data.restaurant.name) || acc.restaurantName,
+              password: "",
+            };
+            if (data.menu) applyMenuBundle(data.menu);
+            if (data.restaurant && data.restaurant.name !== acc.restaurantName && acc.restaurantName) {
+              const updated = await PlatoAPI.updateRestaurant({ name: acc.restaurantName });
+              applyMenuBundle(updated.menu);
+              state.account.restaurantName = acc.restaurantName;
+            }
+            PlatoStorage.saveAccount({
+              email: state.account.email,
+              restaurantName: state.account.restaurantName,
+            });
+            toast(t("accountSaved"));
+            renderAdmin();
+            return;
+          }
+          state.account = acc;
+          PlatoStorage.saveAccount(acc);
+          state.menu.restaurant.name = acc.restaurantName;
+          persist();
+          toast(t("accountSaved"));
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Auth error");
+        }
       };
     }
     const so = $("#sign-out");
     if (so) {
-      so.onclick = () => {
+      so.onclick = async () => {
+        PlatoAPI.logout();
         PlatoStorage.clearAccount();
         state.account = null;
+        if (PlatoAPI.isApi()) {
+          try {
+            const pub = await PlatoAPI.getPublicMenu("taqueria-el-sol", state.lang);
+            applyMenuBundle(pub.menu);
+          } catch {
+            /* ignore */
+          }
+        }
         toast(t("signOut"));
         renderAdmin();
       };
@@ -967,15 +1121,23 @@
         const file = e.target.files && e.target.files[0];
         if (!file) return;
         try {
-          const dataUrl = await readImageFile(file);
-          draft.photos = [dataUrl, ...(draft.photos || []).filter((p) => p !== dataUrl)];
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            // Compress then upload blob
+            const dataUrl = await readImageFile(file);
+            const blob = await (await fetch(dataUrl)).blob();
+            const up = await PlatoAPI.uploadPhoto(blob);
+            draft.photos = [up.url, ...(draft.photos || []).filter((p) => p !== up.url)];
+          } else {
+            const dataUrl = await readImageFile(file);
+            draft.photos = [dataUrl, ...(draft.photos || []).filter((p) => p !== dataUrl)];
+          }
           state.editDish = draft;
           const prev = $("#photo-preview");
           prev.classList.remove("hidden");
-          prev.innerHTML = `<img src="${dataUrl}" alt="" />`;
+          prev.innerHTML = `<img src="${draft.photos[0]}" alt="" />`;
           toast("📷");
-        } catch {
-          toast("Image error");
+        } catch (err) {
+          toast(err.message || "Image error");
         }
       });
 
@@ -991,14 +1153,23 @@
       });
 
     $("#btn-delete") &&
-      ($("#btn-delete").onclick = () => {
+      ($("#btn-delete").onclick = async () => {
         if (!draft.id) return;
-        state.menu.dishes = state.menu.dishes.filter((d) => d.id !== draft.id);
-        persist();
-        state.editDish = null;
-        state.adminTab = "menu";
-        toast(t("deleteDish"));
-        renderAdmin();
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.deleteDish(draft.id);
+            applyMenuBundle(res.menu);
+          } else {
+            state.menu.dishes = state.menu.dishes.filter((d) => d.id !== draft.id);
+            persist();
+          }
+          state.editDish = null;
+          state.adminTab = "menu";
+          toast(t("deleteDish"));
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Delete failed");
+        }
       });
 
     form.onsubmit = async (e) => {
@@ -1039,22 +1210,39 @@
     renderAdmin();
 
     try {
-      const { name: nameMap, desc: descMap } = await PlatoTranslate.translateDishFields({
-        name,
-        desc,
-        fromLang: sourceLang,
-        toLangs: langs,
-        onProgress: (done, total) => {
-          state.translateProgress = {
-            pct: Math.round((done / total) * 100),
-            label: `${t("translating")} ${done}/${total}`,
-          };
-          const bar = $(".progress-bar");
-          const lab = $("#translate-progress span");
-          if (bar) bar.style.width = state.translateProgress.pct + "%";
-          if (lab) lab.textContent = state.translateProgress.label;
-        },
-      });
+      let nameMap;
+      let descMap;
+      if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+        state.translateProgress = { pct: 30, label: t("translating") };
+        renderAdmin();
+        const res = await PlatoAPI.translateDish({
+          name,
+          desc,
+          fromLang: sourceLang,
+          toLangs: langs,
+        });
+        nameMap = res.name;
+        descMap = res.desc;
+      } else {
+        const filled = await PlatoTranslate.translateDishFields({
+          name,
+          desc,
+          fromLang: sourceLang,
+          toLangs: langs,
+          onProgress: (done, total) => {
+            state.translateProgress = {
+              pct: Math.round((done / total) * 100),
+              label: `${t("translating")} ${done}/${total}`,
+            };
+            const bar = $(".progress-bar");
+            const lab = $("#translate-progress span");
+            if (bar) bar.style.width = state.translateProgress.pct + "%";
+            if (lab) lab.textContent = state.translateProgress.label;
+          },
+        });
+        nameMap = filled.name;
+        descMap = filled.desc;
+      }
       draft.name = nameMap;
       draft.desc = descMap;
       draft._sourceLang = sourceLang;
@@ -1092,18 +1280,26 @@
     if (missing.length) {
       toast(t("translating"));
       try {
-        const filled = await PlatoTranslate.translateDishFields({
-          name,
-          desc,
-          fromLang: sourceLang,
-          toLangs: langs,
-        });
+        let filled;
+        if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+          filled = await PlatoAPI.translateDish({
+            name,
+            desc,
+            fromLang: sourceLang,
+            toLangs: langs,
+          });
+        } else {
+          filled = await PlatoTranslate.translateDishFields({
+            name,
+            desc,
+            fromLang: sourceLang,
+            toLangs: langs,
+          });
+        }
         draft.name = { ...filled.name, ...draft.name };
         draft.desc = { ...filled.desc, ...draft.desc };
-        // prefer user edits already collected
         collectLangFields(draft, sourceLang, name, desc);
       } catch (e) {
-        // keep what we have; fill blanks with source
         langs.forEach((c) => {
           if (!draft.name[c]) draft.name[c] = name;
           if (!draft.desc[c]) draft.desc[c] = desc;
@@ -1116,23 +1312,46 @@
     draft.category = $("#f-cat").value;
     draft.photoCount = (draft.photos || []).length;
 
-    if (!draft.id) {
-      draft.id = "dish-" + Date.now();
-      state.menu.dishes.push(draft);
-    } else {
-      const i = state.menu.dishes.findIndex((d) => d.id === draft.id);
-      if (i >= 0) state.menu.dishes[i] = draft;
+    const payload = {
+      id: draft.id || undefined,
+      category: draft.category,
+      price: draft.price,
+      spicy: draft.spicy,
+      popular: !!draft.popular,
+      soldOut: !!draft.soldOut,
+      name: draft.name,
+      desc: draft.desc,
+      tags: draft.tags || {},
+      allergens: draft.allergens || {},
+      photos: draft.photos || [],
+      photoCount: draft.photoCount,
+    };
+
+    try {
+      if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+        const res = draft.id
+          ? await PlatoAPI.updateDish(draft.id, payload)
+          : await PlatoAPI.createDish(payload);
+        applyMenuBundle(res.menu);
+      } else {
+        if (!draft.id) {
+          draft.id = "dish-" + Date.now();
+          state.menu.dishes.push(draft);
+        } else {
+          const i = state.menu.dishes.findIndex((d) => d.id === draft.id);
+          if (i >= 0) state.menu.dishes[i] = draft;
+        }
+        delete draft._sourceLang;
+        delete draft._translated;
+        persist();
+      }
+      state.editDish = null;
+      state.adminTab = "menu";
+      toast(t("dishSaved"));
+      renderAdmin();
+    } catch (err) {
+      toast(err.message || "Save failed");
     }
-
-    // clean internal flags
-    delete draft._sourceLang;
-    delete draft._translated;
-
-    persist();
-    state.editDish = null;
-    state.adminTab = "menu";
-    toast(t("dishSaved"));
-    renderAdmin();
   }
 
   async function fillAllMissingTranslations() {
@@ -1146,17 +1365,52 @@
     let i = 0;
     const total = state.menu.dishes.length;
     for (const d of state.menu.dishes) {
-      d.name = await PlatoTranslate.fillMissing(d.name || {}, from, langs);
-      d.desc = await PlatoTranslate.fillMissing(d.desc || {}, from, langs);
-      if (d.allergens && typeof d.allergens === "object") {
-        d.allergens = await PlatoTranslate.fillMissing(d.allergens, from, langs);
+      const srcName = (d.name && (d.name[from] || d.name.en)) || "";
+      const srcDesc = (d.desc && (d.desc[from] || d.desc.en)) || "";
+      try {
+        if (PlatoAPI.isApi() && PlatoAPI.getToken() && srcName) {
+          const filled = await PlatoAPI.translateDish({
+            name: srcName,
+            desc: srcDesc,
+            fromLang: from,
+            toLangs: langs,
+          });
+          d.name = { ...filled.name, ...d.name };
+          d.desc = { ...filled.desc, ...d.desc };
+          await PlatoAPI.updateDish(d.id, {
+            name: d.name,
+            desc: d.desc,
+            category: d.category,
+            price: d.price,
+            spicy: d.spicy,
+            popular: d.popular,
+            soldOut: d.soldOut,
+            photos: d.photos,
+            allergens: d.allergens,
+            tags: d.tags,
+          });
+        } else {
+          d.name = await PlatoTranslate.fillMissing(d.name || {}, from, langs);
+          d.desc = await PlatoTranslate.fillMissing(d.desc || {}, from, langs);
+        }
+      } catch (e) {
+        console.warn(e);
       }
       i++;
       if (prog) {
         prog.innerHTML = `<div class="progress-bar" style="width:${Math.round((i / total) * 100)}%"></div><span>${i}/${total}</span>`;
       }
     }
-    persist();
+    if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+      try {
+        const full = await PlatoAPI.getMyMenu();
+        applyMenuBundle(full.menu);
+      } catch {
+        /* ignore */
+      }
+    } else {
+      persist();
+    }
     toast(t("translated"));
     renderAdmin();
   }
@@ -1179,11 +1433,25 @@
     });
   }
 
-  function init() {
-    initData();
+  async function init() {
     parseHash();
     bindGlobal();
+    // Show shell quickly
+    renderChrome();
+    try {
+      await initData();
+    } catch (e) {
+      console.error(e);
+      state.menu = JSON.parse(JSON.stringify(PLATO_SEED));
+      state.settings = PlatoStorage.loadSettings();
+    }
     render();
+    // Mode badge in console
+    console.info(
+      "Plato mode:",
+      PlatoAPI.isApi() ? "API backend" : "localStorage offline",
+      PlatoAPI.getToken() ? "(authenticated)" : "(guest)"
+    );
   }
 
   if (document.readyState === "loading") {
