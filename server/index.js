@@ -54,8 +54,17 @@ async function main() {
     res.sendFile(path.join(config.ROOT, "m.html"));
   });
 
-  // Static frontend
-  app.use(express.static(config.ROOT, { extensions: ["html"] }));
+  // Static frontend (no-cache JS/CSS so UI fixes show up on refresh)
+  app.use(
+    express.static(config.ROOT, {
+      extensions: ["html"],
+      setHeaders(res, filePath) {
+        if (/\.(js|css|html)$/i.test(filePath)) {
+          res.setHeader("Cache-Control", "no-store, max-age=0");
+        }
+      },
+    })
+  );
 
   app.use((req, res, next) => {
     if (req.method !== "GET" && req.method !== "HEAD") return next();

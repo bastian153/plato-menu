@@ -1,6 +1,23 @@
 (function () {
+  function detectLang() {
+    try {
+      const n = (navigator.language || "en").toLowerCase();
+      const code = n.split("-")[0];
+      const codes =
+        typeof PLATO_LANG_CODES !== "undefined" ? PLATO_LANG_CODES : ["en", "es"];
+      return codes.includes(code) ? code : "en";
+    } catch {
+      return "en";
+    }
+  }
+
+  const DEFAULT_SETTINGS = {
+    enabledLangs: ["en", "es", "zh", "ko", "ja", "vi", "pt", "fr", "ar"],
+    primaryLang: "en",
+  };
+
   const state = {
-    lang: localStorage.getItem("plato_lang") || detectLang(),
+    lang: (typeof localStorage !== "undefined" && localStorage.getItem("plato_lang")) || detectLang(),
     view: "home",
     category: "all",
     modal: null,
@@ -8,29 +25,33 @@
     adminTab: "stats",
     help: { hunger: null, spice: null, pref: null },
     menu: null,
-    settings: null,
+    settings: { ...DEFAULT_SETTINGS },
     account: null,
     editDish: null,
     translateProgress: null,
-    stats: { scans: 128, nonEn: 47, topDish: "al-pastor" },
+    stats: { scans: 0, nonEn: 0, topDish: null },
+    loading: true,
+    loadError: null,
   };
 
-  function detectLang() {
-    const n = (navigator.language || "en").toLowerCase();
-    const code = n.split("-")[0];
-    return PLATO_LANG_CODES.includes(code) ? code : "en";
-  }
-
   function t(key) {
-    return platoT(state.lang, key);
+    try {
+      return platoT(state.lang, key);
+    } catch {
+      return key;
+    }
   }
 
   function enabledLangs() {
-    return state.settings.enabledLangs.filter((c) => PLATO_LANG_CODES.includes(c));
+    const list =
+      (state.settings && state.settings.enabledLangs) || DEFAULT_SETTINGS.enabledLangs;
+    const codes =
+      typeof PLATO_LANG_CODES !== "undefined" ? PLATO_LANG_CODES : list;
+    return list.filter((c) => codes.includes(c));
   }
 
   function primaryLang() {
-    return state.settings.primaryLang || "en";
+    return (state.settings && state.settings.primaryLang) || "en";
   }
 
   function loc(map) {
@@ -75,19 +96,48 @@
   }
 
   function applyMenuBundle(bundle) {
-    if (!bundle) return;
+    if (!bundle || !bundle.restaurant) return;
     state.menu = {
       restaurant: bundle.restaurant,
-      categories: bundle.categories,
-      dishes: bundle.dishes,
+      categories: bundle.categories || [],
+      dishes: bundle.dishes || [],
       pendingPhotos: bundle.pendingPhotos || [],
     };
     if (bundle.settings) {
       state.settings = {
-        enabledLangs: bundle.settings.enabledLangs || state.settings.enabledLangs,
-        primaryLang: bundle.settings.primaryLang || state.settings.primaryLang,
+        enabledLangs:
+          bundle.settings.enabledLangs ||
+          state.settings.enabledLangs ||
+          DEFAULT_SETTINGS.enabledLangs,
+        primaryLang:
+          bundle.settings.primaryLang ||
+          state.settings.primaryLang ||
+          "en",
       };
     }
+  }
+
+  function ensureMenu() {
+    if (state.menu && state.menu.dishes) return state.menu;
+    if (typeof PLATO_SEED !== "undefined") {
+      state.menu = JSON.parse(JSON.stringify(PLATO_SEED));
+      return state.menu;
+    }
+    state.menu = {
+      restaurant: {
+        id: "demo",
+        name: "Plato Demo",
+        emoji: "🌮",
+        tagline: { en: "Demo menu", es: "Menú demo" },
+        address: { en: "Local", es: "Local" },
+        hours: { en: "Open", es: "Abierto" },
+        slug: "demo",
+      },
+      categories: [{ id: "tacos", labels: { en: "Tacos", es: "Tacos" } }],
+      dishes: [],
+      pendingPhotos: [],
+    };
+    return state.menu;
   }
 
   function persist() {
@@ -99,56 +149,76 @@
   }
 
   async function initData() {
-    state.settings = PlatoStorage.loadSettings();
-    state.account = PlatoStorage.loadAccount();
+    state.loading = true;
+    state.loadError = null;
+    try {
+      const loaded = PlatoStorage.loadSettings();
+      state.settings = {
+        enabledLangs: (loaded && loaded.enabledLangs) || DEFAULT_SETTINGS.enabledLangs,
+        primaryLang: (loaded && loaded.primaryLang) || DEFAULT_SETTINGS.primaryLang,
+      };
+      state.account = PlatoStorage.loadAccount();
 
-    const apiUp = await PlatoAPI.detect();
-    if (apiUp) {
-      try {
-        if (PlatoAPI.getToken()) {
-          const me = await PlatoAPI.me();
-          state.account = {
-            email: me.user.email,
-            restaurantName: (me.restaurant && me.restaurant.name) || "",
-            password: "",
-          };
-          if (me.menu) applyMenuBundle(me.menu);
-          const full = await PlatoAPI.getMyMenu();
-          applyMenuBundle(full.menu);
-          if (full.stats) {
+      const apiUp = await PlatoAPI.detect();
+      if (apiUp) {
+        try {
+          if (PlatoAPI.getToken()) {
+            try {
+              const me = await PlatoAPI.me();
+              state.account = {
+                email: me.user.email,
+                restaurantName: (me.restaurant && me.restaurant.name) || "",
+                password: "",
+              };
+              if (me.menu) applyMenuBundle(me.menu);
+              const full = await PlatoAPI.getMyMenu();
+              applyMenuBundle(full.menu);
+              if (full.stats) {
+                state.stats = {
+                  scans: full.stats.scans || 0,
+                  nonEn: full.stats.nonEn || 0,
+                  topDish: full.stats.topDish,
+                };
+              }
+              ensureMenu();
+              return;
+            } catch (authErr) {
+              // Bad/expired token — clear and load public demo
+              console.warn("Auth failed, clearing token", authErr);
+              PlatoAPI.logout();
+            }
+          }
+          // Guest / not logged in: public demo slug
+          const pub = await PlatoAPI.getPublicMenu("taqueria-el-sol", state.lang);
+          applyMenuBundle(pub.menu);
+          if (pub.stats) {
             state.stats = {
-              scans: full.stats.scans || 0,
-              nonEn: full.stats.nonEn || 0,
-              topDish: full.stats.topDish,
+              scans: pub.stats.scans || 0,
+              nonEn: pub.stats.nonEn || 0,
+              topDish: pub.stats.topDish,
             };
           }
+          ensureMenu();
           return;
+        } catch (err) {
+          console.warn("API load failed, using local seed", err);
+          state.loadError = err.message || "API load failed";
         }
-        // Guest / not logged in: public demo slug
-        const pub = await PlatoAPI.getPublicMenu("taqueria-el-sol", state.lang);
-        applyMenuBundle(pub.menu);
-        if (pub.stats) {
-          state.stats = {
-            scans: pub.stats.scans || 0,
-            nonEn: pub.stats.nonEn || 0,
-            topDish: pub.stats.topDish,
-          };
-        }
-        return;
-      } catch (err) {
-        console.warn("API load failed, using local seed", err);
       }
-    }
 
-    const saved = PlatoStorage.loadMenu();
-    if (saved && saved.dishes) {
-      state.menu = saved;
-    } else {
-      state.menu = JSON.parse(JSON.stringify(PLATO_SEED));
-      persist();
-    }
-    if (state.account && state.account.restaurantName) {
-      state.menu.restaurant.name = state.account.restaurantName;
+      const saved = PlatoStorage.loadMenu();
+      if (saved && saved.dishes) {
+        state.menu = saved;
+      } else if (typeof PLATO_SEED !== "undefined") {
+        state.menu = JSON.parse(JSON.stringify(PLATO_SEED));
+        persist();
+      }
+      if (state.account && state.account.restaurantName && state.menu && state.menu.restaurant) {
+        state.menu.restaurant.name = state.account.restaurantName;
+      }
+      ensureMenu();
+    } finally {
+      state.loading = false;
     }
   }
 
@@ -218,22 +288,48 @@
 
   /* ---------- RENDER ---------- */
   function render() {
-    renderChrome();
-    $all(".view").forEach((v) => v.classList.remove("active"));
-    const map = { home: "#view-home", menu: "#view-menu", admin: "#view-admin" };
-    const el = $(map[state.view] || map.home);
-    if (el) el.classList.add("active");
+    try {
+      renderChrome();
+      $all(".view").forEach((v) => v.classList.remove("active"));
+      const map = { home: "#view-home", menu: "#view-menu", admin: "#view-admin" };
+      const el = $(map[state.view] || map.home);
+      if (el) el.classList.add("active");
 
-    if (state.view === "home") renderHome();
-    if (state.view === "menu") renderMenu();
-    if (state.view === "admin") renderAdmin();
+      if (state.loading && !state.menu) {
+        const target = el || $("#view-home");
+        if (target) {
+          target.innerHTML =
+            '<div class="landing" style="padding:3rem 1.25rem;text-align:center;color:var(--muted)">Loading menu…</div>';
+        }
+        return;
+      }
 
-    if (state.modal === "dish") renderDishModal();
-    else if (state.modal === "help") renderHelpModal();
-    else if (state.modal === "edit") renderEditModal();
-    else {
-      $("#modal-root").classList.remove("open");
-      $("#modal-root").innerHTML = "";
+      ensureMenu();
+
+      if (state.view === "home") renderHome();
+      if (state.view === "menu") renderMenu();
+      if (state.view === "admin") renderAdmin();
+
+      if (state.modal === "dish") renderDishModal();
+      else if (state.modal === "help") renderHelpModal();
+      else if (state.modal === "edit") renderEditModal();
+      else {
+        const mr = $("#modal-root");
+        if (mr) {
+          mr.classList.remove("open");
+          mr.innerHTML = "";
+        }
+      }
+    } catch (err) {
+      console.error("Render error", err);
+      const home = $("#view-home");
+      if (home) {
+        home.classList.add("active");
+        home.innerHTML =
+          '<div class="landing" style="padding:2rem;text-align:center"><h1>Something went wrong</h1><p style="color:var(--muted)">' +
+          escapeHtml(err.message || String(err)) +
+          '</p><p><button class="btn btn-primary" onclick="location.reload()">Reload</button></p></div>';
+      }
     }
   }
 
@@ -241,12 +337,21 @@
     const switchEl = $(".lang-switch");
     if (switchEl) {
       const langs = enabledLangs();
-      // compact: select if many langs
+      const allLangs =
+        typeof PLATO_LANGS !== "undefined" && PLATO_LANGS.length
+          ? PLATO_LANGS
+          : [
+              { code: "en", native: "English" },
+              { code: "es", native: "Español" },
+            ];
+      const options = allLangs.filter(
+        (l) => langs.includes(l.code) || l.code === state.lang
+      );
       switchEl.innerHTML = `
         <label class="lang-select-wrap">
           <span class="sr-only">Language</span>
           <select id="lang-select" class="lang-select" aria-label="Language">
-            ${PLATO_LANGS.filter((l) => langs.includes(l.code) || l.code === state.lang)
+            ${options
               .map(
                 (l) =>
                   `<option value="${l.code}" ${l.code === state.lang ? "selected" : ""}>${escapeHtml(l.native)}</option>`
@@ -255,32 +360,19 @@
           </select>
         </label>
       `;
-      // ensure current lang in list
       const sel = $("#lang-select");
-      if (sel && !langs.includes(state.lang)) {
-        // still show current
-      }
-      sel.onchange = () => setLang(sel.value);
+      if (sel) sel.onchange = () => setLang(sel.value);
     }
 
     $all("[data-nav]").forEach((a) => {
       a.classList.toggle("active", a.dataset.nav === state.view);
-      if (a.dataset.i18n) {
-        const span = a.querySelector("[data-i18n]") || a;
-        if (a.dataset.i18n === "navHome" && a.classList.contains("brand")) {
-          const label = a.querySelector(".brand-label");
-          if (label) label.textContent = t("navHome");
-        } else if (a.dataset.i18n) {
-          a.textContent = t(a.dataset.i18n);
-        }
-      }
     });
     const brandLabel = $(".brand-label");
-    if (brandLabel) brandLabel.textContent = t("navHome");
+    if (brandLabel) brandLabel.textContent = t("navHome") || "Plato";
     const navMenu = $('[data-nav="menu"]');
-    if (navMenu) navMenu.textContent = t("navMenu");
+    if (navMenu) navMenu.textContent = t("navMenu") || "Menu";
     const navAdmin = $('[data-nav="admin"]');
-    if (navAdmin) navAdmin.textContent = t("navAdmin");
+    if (navAdmin) navAdmin.textContent = t("navAdmin") || "Owner";
   }
 
   function renderHome() {
@@ -356,10 +448,12 @@
   }
 
   function renderMenu() {
-    const r = state.menu.restaurant;
+    const menu = ensureMenu();
+    const r = menu.restaurant;
     const root = $("#view-menu");
-    const cats = state.menu.categories;
-    const dishes = state.menu.dishes.filter(
+    if (!root) return;
+    const cats = menu.categories || [];
+    const dishes = (menu.dishes || []).filter(
       (d) => state.category === "all" || d.category === state.category
     );
 
@@ -614,7 +708,9 @@
   /* ---------- ADMIN ---------- */
   function renderAdmin() {
     const root = $("#view-admin");
-    const top = state.menu.dishes.find((d) => d.id === state.stats.topDish);
+    if (!root) return;
+    ensureMenu();
+    const top = (state.menu.dishes || []).find((d) => d.id === state.stats.topDish);
 
     root.innerHTML = `
       <div class="admin-wrap">
@@ -1483,32 +1579,53 @@
   }
 
   async function init() {
-    // Capture magic / OAuth token from redirect
-    const params = new URLSearchParams(location.search);
-    const magicToken = params.get("magic_token");
-    if (magicToken) {
-      PlatoAPI.setToken(magicToken);
-      params.delete("magic_token");
-      const qs = params.toString();
-      history.replaceState({}, "", location.pathname + (qs ? "?" + qs : "") + (location.hash || "#admin"));
-    }
-
-    parseHash();
-    bindGlobal();
-    renderChrome();
     try {
+      // Capture magic / OAuth token from redirect
+      const params = new URLSearchParams(location.search);
+      const magicToken = params.get("magic_token");
+      if (magicToken) {
+        PlatoAPI.setToken(magicToken);
+        params.delete("magic_token");
+        const qs = params.toString();
+        history.replaceState(
+          {},
+          "",
+          location.pathname + (qs ? "?" + qs : "") + (location.hash || "#admin")
+        );
+      }
+
+      parseHash();
+      bindGlobal();
+
+      // Defaults so first paint never crashes
+      if (!state.settings) state.settings = { ...DEFAULT_SETTINGS };
+      ensureMenu();
+      render();
+
       await initData();
+      ensureMenu();
+      render();
+
+      console.info(
+        "Plato mode:",
+        PlatoAPI.isApi() ? "API backend" : "localStorage offline",
+        PlatoAPI.getToken() ? "(authenticated)" : "(guest)",
+        "dishes:",
+        state.menu && state.menu.dishes ? state.menu.dishes.length : 0
+      );
     } catch (e) {
-      console.error(e);
-      state.menu = JSON.parse(JSON.stringify(PLATO_SEED));
-      state.settings = PlatoStorage.loadSettings();
+      console.error("Init failed", e);
+      state.loading = false;
+      try {
+        ensureMenu();
+        render();
+      } catch (e2) {
+        document.body.innerHTML =
+          '<div style="font-family:system-ui;padding:2rem;background:#111;color:#fff;min-height:100vh"><h1>Plato failed to load</h1><pre style="color:#f88">' +
+          String(e.message || e) +
+          "</pre><button onclick=\"location.reload()\">Reload</button></div>";
+      }
     }
-    render();
-    console.info(
-      "Plato mode:",
-      PlatoAPI.isApi() ? "API backend" : "localStorage offline",
-      PlatoAPI.getToken() ? "(authenticated)" : "(guest)"
-    );
   }
 
   if (document.readyState === "loading") {
