@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0e0c" />
+    <title>Menu · Plato</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/styles.css" />
+    <style>
+      .public-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.65rem 1rem;
+        background: rgba(15, 14, 12, 0.92);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        position: sticky;
+        top: 0;
+        z-index: 50;
+      }
+      .public-bar .slug {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .err {
+        max-width: 420px;
+        margin: 4rem auto;
+        text-align: center;
+        color: var(--muted);
+        padding: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="public-bar">
+      <div>
+        <strong id="rest-name">…</strong>
+        <div class="slug" id="rest-slug"></div>
+      </div>
+      <select id="lang-select" class="lang-select" aria-label="Language"></select>
+    </div>
+    <div id="app"></div>
+    <div id="modal-root" class="modal-root"></div>
+    <div id="toast" class="toast"></div>
+
+    <script src="/js/langs.js"></script>
+    <script>
+      (function () {
+        const parts = location.pathname.replace(/\/+$/, "").split("/");
+        const slug = parts[parts.length - 1] || "";
+        const app = document.getElementById("app");
+        const modalRoot = document.getElementById("modal-root");
+        let menu = null;
+        let lang =
+          localStorage.getItem("plato_lang") ||
+          (navigator.language || "en").slice(0, 2);
+        let photoIndex = 0;
+        let currentDish = null;
+
+        function tMap(map) {
+          if (!map) return "";
+          if (typeof map === "string") return map;
+          return map[lang] || map.en || map.es || Object.values(map)[0] || "";
+        }
+
+        function toast(msg) {
+          const el = document.getElementById("toast");
+          el.textContent = msg;
+          el.classList.add("show");
+          setTimeout(() => el.classList.remove("show"), 2000);
+        }
+
+        async function load() {
+          if (!slug || slug === "m") {
+            app.innerHTML = '<p class="err">Missing restaurant in URL. Use /m/your-slug</p>';
+            return;
+          }
+          try {
+            const res = await fetch(
+              `/api/public/${encodeURIComponent(slug)}?lang=${encodeURIComponent(lang)}`
+            );
+            if (!res.ok) throw new Error("Menu not found");
+            const data = await res.json();
+            menu = data.menu;
+            document.title = `${menu.restaurant.name} · Menu`;
+            document.getElementById("rest-name").textContent =
+              (menu.restaurant.emoji || "") + " " + menu.restaurant.name;
+            document.getElementById("rest-slug").textContent = "/m/" + slug;
+            const enabled = (menu.settings && menu.settings.enabledLangs) || ["en", "es"];
+            if (!enabled.includes(lang)) lang = enabled[0] || "en";
+            const sel = document.getElementById("lang-select");
+            sel.innerHTML = (window.PLATO_LANGS || [])
+              .filter((l) => enabled.includes(l.code))
+              .map(
+                (l) =>
+                  `<option value="${l.code}" ${l.code === lang ? "selected" : ""}>${l.native}</option>`
+              )
+              .join("");
+            sel.onchange = () => {
+              lang = sel.value;
+              localStorage.setItem("plato_lang", lang);
+              document.documentElement.lang = lang;
+              const meta = (PLATO_LANGS || []).find((x) => x.code === lang);
+              document.documentElement.dir =
+                meta && meta.dir === "rtl" ? "rtl" : "ltr";
+              render();
+            };
+            document.documentElement.lang = lang;
+            render();
+          } catch (e) {
+            app.innerHTML = `<p class="err">Could not load menu for <strong>${slug}</strong>.<br/>${e.message}</p>`;
+          }
+        }
+
+        function render() {
+          if (!menu) return;
+          const r = menu.restaurant;
+          const cats = menu.categories || [];
+          const dishes = menu.dishes || [];
+          app.innerHTML = `
+            <div class="menu-wrap" style="padding-bottom:2rem">
+              <header class="resto-header">
+                <div class="emoji">${r.emoji || "🍽️"}</div>
+                <h1>${esc(r.name)}</h1>
+                <p class="meta">${esc(tMap(r.tagline))} · ${esc(tMap(r.address))}</p>
+                <div class="status">${esc(tMap(r.hours))}</div>
+              </header>
+              <div class="dish-list">
+                ${dishes
+                  .map((d) => {
+                    const thumb = (d.photos && d.photos[0]) || "";
+                    return `<button type="button" class="dish-card ${d.soldOut ? "sold" : ""}" data-id="${d.id}">
+                      ${thumb ? `<img class="dish-thumb" src="${thumb}" alt=""/>` : `<div class="dish-thumb placeholder-thumb">🍽️</div>`}
+                      <div class="dish-body">
+                        <div class="dish-top">
+                          <div class="dish-name">${esc(tMap(d.name))}</div>
+                          <div class="dish-price">$${Number(d.price).toFixed(2)}</div>
+                        </div>
+                        <p class="dish-desc">${esc(tMap(d.desc))}</p>
+                        <div class="dish-meta">
+                          ${d.popular ? `<span class="badge popular">Popular</span>` : ""}
+                          ${d.soldOut ? `<span class="badge sold">Sold out</span>` : ""}
+                          ${d.spicy ? `<span class="badge">${"🌶️".repeat(d.spicy)}</span>` : ""}
+                        </div>
+                      </div>
+                    </button>`;
+                  })
+                  .join("")}
+              </div>
+              <p class="site-footer">Powered by Plato · <a href="/">plato-menu</a></p>
+            </div>`;
+          app.querySelectorAll("[data-id]").forEach((btn) => {
+            btn.onclick = () => openDish(btn.dataset.id);
+          });
+        }
+
+        function openDish(id) {
+          const d = menu.dishes.find((x) => x.id === id);
+          if (!d) return;
+          currentDish = d;
+          photoIndex = 0;
+          fetch(`/api/public/${encodeURIComponent(slug)}/events`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "dish_open", dishId: id, lang }),
+          }).catch(() => {});
+          showDish();
+        }
+
+        function showDish() {
+          const d = currentDish;
+          const photos = d.photos || [];
+          const idx = photos.length ? photoIndex % photos.length : 0;
+          modalRoot.classList.add("open");
+          modalRoot.innerHTML = `
+            <div class="modal-sheet">
+              <div class="modal-carousel">
+                <button class="modal-close" id="x">×</button>
+                ${
+                  photos.length
+                    ? `<img src="${photos[idx]}" alt=""/>`
+                    : `<div class="no-photo-lg">🍽️</div>`
+                }
+                ${
+                  photos.length > 1
+                    ? `<div class="carousel-nav">
+                        <button type="button" id="prev">‹</button>
+                        <button type="button" id="next">›</button>
+                      </div>`
+                    : ""
+                }
+              </div>
+              <div class="modal-body">
+                <h2>${esc(tMap(d.name))}</h2>
+                <div class="modal-price">$${Number(d.price).toFixed(2)}</div>
+                <p class="modal-desc">${esc(tMap(d.desc))}</p>
+                <div class="order-hint">Show this screen at the counter</div>
+                <label class="field" style="margin-top:1rem">
+                  <span>Share a photo of this dish (pending approval)</span>
+                  <input type="file" id="guest-photo" accept="image/*" capture="environment"/>
+                </label>
+              </div>
+            </div>`;
+          document.getElementById("x").onclick = () => {
+            modalRoot.classList.remove("open");
+            modalRoot.innerHTML = "";
+          };
+          modalRoot.onclick = (e) => {
+            if (e.target === modalRoot) {
+              modalRoot.classList.remove("open");
+              modalRoot.innerHTML = "";
+            }
+          };
+          const prev = document.getElementById("prev");
+          const next = document.getElementById("next");
+          if (prev)
+            prev.onclick = (e) => {
+              e.stopPropagation();
+              photoIndex = (photoIndex - 1 + photos.length) % photos.length;
+              showDish();
+            };
+          if (next)
+            next.onclick = (e) => {
+              e.stopPropagation();
+              photoIndex = (photoIndex + 1) % photos.length;
+              showDish();
+            };
+          const gp = document.getElementById("guest-photo");
+          if (gp) {
+            gp.onchange = async () => {
+              const file = gp.files && gp.files[0];
+              if (!file) return;
+              const fd = new FormData();
+              fd.append("photo", file);
+              try {
+                const res = await fetch(
+                  `/api/public/${encodeURIComponent(slug)}/dishes/${encodeURIComponent(d.id)}/photos`,
+                  { method: "POST", body: fd }
+                );
+                if (!res.ok) throw new Error("Upload failed");
+                toast("Photo submitted for approval");
+              } catch {
+                toast("Upload failed");
+              }
+            };
+          }
+        }
+
+        function esc(s) {
+          return String(s || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        }
+
+        load();
+      })();
+    </script>
+  </body>
+</html>

@@ -5,7 +5,7 @@
 Living multi-language restaurant menus with real plate photos — not a PDF. Guests switch language and see what the food actually looks like. Owners add a dish once and translate it to every language in one tap.
 
 ![License](https://img.shields.io/badge/license-MIT-e85d04)
-![Status](https://img.shields.io/badge/status-demo%20v0.1-2a9d8f)
+![Status](https://img.shields.io/badge/status-v0.3-2a9d8f)
 ![Stack](https://img.shields.io/badge/stack-HTML%20%7C%20CSS%20%7C%20JS-111)
 
 ---
@@ -43,8 +43,9 @@ Open:
 | Landing | http://127.0.0.1:3847/ |
 | Guest menu | http://127.0.0.1:3847/#menu |
 | Owner dashboard | http://127.0.0.1:3847/#admin |
+| **Public menu** | http://127.0.0.1:3847/m/taqueria-el-sol |
+| **QR poster** | http://127.0.0.1:3847/api/public/taqueria-el-sol/qr-print |
 | API health | http://127.0.0.1:3847/api/health |
-| Public menu JSON | http://127.0.0.1:3847/api/public/taqueria-el-sol |
 
 ### Demo login (seeded automatically)
 

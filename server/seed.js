@@ -1,108 +1,109 @@
 const path = require("path");
-const { db, getRestaurantByOwner } = require("./db");
+const { get, run, getRestaurantByOwner } = require("./db");
 const { id, uniqueSlug, hashPassword } = require("./auth");
+const config = require("./config");
 
-// Load seed dishes from frontend seed if available
 function loadFrontendSeed() {
   try {
-    // seed.js is browser-oriented; re-require a node-friendly copy
-    const seedPath = path.join(__dirname, "seed-data.json");
-    return require(seedPath);
+    return require(path.join(__dirname, "seed-data.json"));
   } catch {
     return null;
   }
 }
 
 async function ensureDemoAccount() {
-  const email = process.env.PLATO_DEMO_EMAIL || "demo@plato.menu";
-  const password = process.env.PLATO_DEMO_PASSWORD || "demo1234";
-  let user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+  const email = config.demoEmail;
+  const password = config.demoPassword;
+  let user = await get("SELECT * FROM users WHERE email = ?", [email]);
 
   if (!user) {
     const userId = id("usr");
     const hash = await hashPassword(password);
-    db.prepare(
-      "INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)"
-    ).run(userId, email, hash, "Demo Owner");
-    user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+    await run(
+      "INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)",
+      [userId, email, hash, "Demo Owner"]
+    );
+    user = await get("SELECT * FROM users WHERE id = ?", [userId]);
   }
 
-  let restaurant = getRestaurantByOwner(user.id);
+  let restaurant = await getRestaurantByOwner(user.id);
   if (!restaurant) {
     const seed = loadFrontendSeed();
     const restId = id("rst");
-    const slug = uniqueSlug(seed?.restaurant?.name || "taqueria-el-sol");
+    const slug = await uniqueSlug(seed?.restaurant?.name || "taqueria-el-sol");
     const enabled = JSON.stringify([
       "en", "es", "zh", "ko", "ja", "vi", "pt", "fr", "ar",
     ]);
 
-    db.prepare(
+    await run(
       `INSERT INTO restaurants
        (id, owner_id, slug, name, emoji, tagline_json, address_json, hours_json, accent, enabled_langs_json, primary_lang)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      restId,
-      user.id,
-      slug,
-      seed?.restaurant?.name || "Taquería El Sol",
-      seed?.restaurant?.emoji || "🌮",
-      JSON.stringify(seed?.restaurant?.tagline || { en: "Street tacos", es: "Tacos de la calle" }),
-      JSON.stringify(seed?.restaurant?.address || { en: "Night market", es: "Mercado nocturno" }),
-      JSON.stringify(seed?.restaurant?.hours || { en: "Open", es: "Abierto" }),
-      seed?.restaurant?.accent || "#e85d04",
-      enabled,
-      "en"
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        restId,
+        user.id,
+        slug,
+        seed?.restaurant?.name || "Taquería El Sol",
+        seed?.restaurant?.emoji || "🌮",
+        JSON.stringify(seed?.restaurant?.tagline || { en: "Street tacos", es: "Tacos" }),
+        JSON.stringify(seed?.restaurant?.address || { en: "Night market", es: "Mercado" }),
+        JSON.stringify(seed?.restaurant?.hours || { en: "Open", es: "Abierto" }),
+        seed?.restaurant?.accent || "#e85d04",
+        enabled,
+        "en",
+      ]
     );
 
     const cats = seed?.categories || [
       { id: "tacos", labels: { en: "Tacos", es: "Tacos" } },
       { id: "bowls", labels: { en: "Bowls", es: "Bowls" } },
-      { id: "sides", labels: { en: "Sides & drinks", es: "Acompañamientos" } },
+      { id: "sides", labels: { en: "Sides", es: "Acompañamientos" } },
     ];
 
-    cats.forEach((c, i) => {
-      db.prepare(
-        `INSERT INTO categories (id, restaurant_id, slug, labels_json, sort_order)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run(id("cat"), restId, c.id, JSON.stringify(c.labels || { en: c.id }), i);
-    });
+    for (let i = 0; i < cats.length; i++) {
+      const c = cats[i];
+      await run(
+        `INSERT INTO categories (id, restaurant_id, slug, labels_json, sort_order) VALUES (?, ?, ?, ?, ?)`,
+        [id("cat"), restId, c.id, JSON.stringify(c.labels || { en: c.id }), i]
+      );
+    }
 
     const dishes = seed?.dishes || [];
-    dishes.forEach((d, i) => {
-      db.prepare(
+    for (let i = 0; i < dishes.length; i++) {
+      const d = dishes[i];
+      await run(
         `INSERT INTO dishes
          (id, restaurant_id, category_slug, price, spicy, popular, sold_out, name_json, desc_json, tags_json, allergens_json, photos_json, photo_count, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        d.id || id("dsh"),
-        restId,
-        d.category || "tacos",
-        d.price || 0,
-        d.spicy || 0,
-        d.popular ? 1 : 0,
-        d.soldOut ? 1 : 0,
-        JSON.stringify(d.name || {}),
-        JSON.stringify(d.desc || {}),
-        JSON.stringify(d.tags || {}),
-        JSON.stringify(
-          typeof d.allergens === "string"
-            ? { en: d.allergens }
-            : d.allergens || {}
-        ),
-        JSON.stringify(d.photos || []),
-        d.photoCount || (d.photos || []).length,
-        i
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          d.id || id("dsh"),
+          restId,
+          d.category || "tacos",
+          d.price || 0,
+          d.spicy || 0,
+          d.popular ? 1 : 0,
+          d.soldOut ? 1 : 0,
+          JSON.stringify(d.name || {}),
+          JSON.stringify(d.desc || {}),
+          JSON.stringify(d.tags || {}),
+          JSON.stringify(
+            typeof d.allergens === "string" ? { en: d.allergens } : d.allergens || {}
+          ),
+          JSON.stringify(d.photos || []),
+          d.photoCount || (d.photos || []).length,
+          i,
+        ]
       );
-    });
+    }
 
-    (seed?.pendingPhotos || []).forEach((p) => {
-      db.prepare(
-        `INSERT INTO pending_photos (id, restaurant_id, dish_id, url)
-         VALUES (?, ?, ?, ?)`
-      ).run(p.id || id("pho"), restId, p.dishId, p.url);
-    });
+    for (const p of seed?.pendingPhotos || []) {
+      await run(
+        `INSERT INTO pending_photos (id, restaurant_id, dish_id, url) VALUES (?, ?, ?, ?)`,
+        [p.id || id("pho"), restId, p.dishId, p.url]
+      );
+    }
 
-    restaurant = getRestaurantByOwner(user.id);
+    restaurant = await getRestaurantByOwner(user.id);
   }
 
   return {

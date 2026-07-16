@@ -1,7 +1,7 @@
 {
   "name": "plato-menu",
-  "version": "0.2.0",
-  "description": "Plato — living multi-language restaurant menus with real plate photos and a real Node backend.",
+  "version": "0.3.0",
+  "description": "Plato — multi-language restaurant menus with Express API, SQLite/Postgres, magic link, QR, and cloud storage options.",
   "private": true,
   "license": "MIT",
   "keywords": [
@@ -9,11 +9,9 @@
     "menu",
     "qr-menu",
     "multilingual",
-    "food-truck",
-    "i18n",
-    "hospitality",
     "express",
-    "sqlite"
+    "sqlite",
+    "postgres"
   ],
   "scripts": {
     "start": "node server/index.js",
@@ -22,21 +20,23 @@
     "static": "python3 -m http.server 8765"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.787.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.1"
+    "multer": "^2.0.1",
+    "nodemailer": "^6.10.1",
+    "pg": "^8.14.1",
+    "qrcode": "^1.5.4"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/bastian153/plato-menu.git"
   },
-  "bugs": {
-    "url": "https://github.com/bastian153/plato-menu/issues"
-  },
-  "homepage": "https://github.com/bastian153/plato-menu#readme",
   "engines": {
     "node": ">=22"
   }

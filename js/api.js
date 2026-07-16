@@ -87,6 +87,29 @@ window.PlatoAPI = (function () {
     return data;
   }
 
+  async function requestMagicLink(email) {
+    return request("/api/auth/magic-link", {
+      method: "POST",
+      body: { email },
+    });
+  }
+
+  function googleAuthUrl() {
+    return baseUrl + "/api/auth/google";
+  }
+
+  function publicMenuUrl(slug) {
+    return baseUrl + "/m/" + encodeURIComponent(slug);
+  }
+
+  function qrPrintUrl(slug) {
+    return baseUrl + "/api/public/" + encodeURIComponent(slug) + "/qr-print";
+  }
+
+  function qrPngUrl(slug) {
+    return baseUrl + "/api/public/" + encodeURIComponent(slug) + "/qr.png";
+  }
+
   async function me() {
     return request("/api/auth/me");
   }
@@ -177,6 +200,11 @@ window.PlatoAPI = (function () {
     logout,
     register,
     login,
+    requestMagicLink,
+    googleAuthUrl,
+    publicMenuUrl,
+    qrPrintUrl,
+    qrPngUrl,
     me,
     getMyMenu,
     getPublicMenu,

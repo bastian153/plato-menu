@@ -715,7 +715,14 @@
           <div class="qr-box">
             <strong>${escapeHtml(state.menu.restaurant.name)}</strong>
             <div class="qr-fake"></div>
-            <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">plato.app/m/${escapeHtml(state.menu.restaurant.id)}</p>
+            <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">/m/${escapeHtml(state.menu.restaurant.slug || state.menu.restaurant.id)}</p>
+            ${
+              PlatoAPI.isApi() && state.menu.restaurant.slug
+                ? `<img src="${PlatoAPI.qrPngUrl(state.menu.restaurant.slug)}?size=180" width="140" height="140" alt="QR" style="margin:0.5rem auto;display:block;border-radius:8px;background:#fff"/>
+                   <a class="btn btn-ghost btn-sm" href="${PlatoAPI.publicMenuUrl(state.menu.restaurant.slug)}" target="_blank" style="margin:0.35rem">Open public menu</a>
+                   <a class="btn btn-ghost btn-sm" href="${PlatoAPI.qrPrintUrl(state.menu.restaurant.slug)}" target="_blank" style="margin:0.35rem">Print QR</a>`
+                : ""
+            }
             <button class="btn btn-primary btn-sm" id="copy-link">${escapeHtml(t("copyQr"))}</button>
           </div>
         </div>
@@ -857,10 +864,12 @@
 
   function renderAccountHtml() {
     const a = state.account || {};
+    const slug = (state.menu.restaurant && state.menu.restaurant.slug) || "taqueria-el-sol";
+    const api = PlatoAPI.isApi();
     return `
       <form id="account-form" class="dish-form">
         <h3>${escapeHtml(t("loginTitle"))}</h3>
-        <p class="source-note">${escapeHtml(t("loginSub"))}</p>
+        <p class="source-note">${escapeHtml(t("loginSub"))}${api ? " · API connected" : " · offline mode"}</p>
         <label class="field">
           <span>${escapeHtml(t("restName"))}</span>
           <input name="restaurantName" value="${escapeHtml(a.restaurantName || state.menu.restaurant.name)}" required />
@@ -871,15 +880,31 @@
         </label>
         <label class="field">
           <span>${escapeHtml(t("password"))}</span>
-          <input name="password" type="password" value="${escapeHtml(a.password || "")}" placeholder="••••••••" />
+          <input name="password" type="password" value="" placeholder="••••••••" />
         </label>
         <button type="submit" class="btn btn-primary" style="width:100%">${escapeHtml(t("signIn"))}</button>
+        ${
+          api
+            ? `<button type="button" class="btn btn-ghost" id="magic-link" style="width:100%;margin-top:0.5rem">Email magic link</button>
+               <a class="btn btn-ghost" id="google-oauth" href="${PlatoAPI.googleAuthUrl()}" style="width:100%;margin-top:0.5rem;display:block;text-align:center">Continue with Google</a>`
+            : ""
+        }
         ${
           a.email
             ? `<button type="button" class="btn btn-ghost" id="sign-out" style="width:100%;margin-top:0.5rem">${escapeHtml(t("signOut"))}</button>`
             : ""
         }
       </form>
+      ${
+        api
+          ? `<div class="qr-box" style="margin-top:1rem">
+              <strong>Public menu</strong>
+              <p style="margin:0.5rem 0"><a href="${PlatoAPI.publicMenuUrl(slug)}" target="_blank" rel="noopener">/m/${escapeHtml(slug)}</a></p>
+              <img src="${PlatoAPI.qrPngUrl(slug)}?size=200" alt="QR" width="160" height="160" style="border-radius:12px;background:#fff;margin:0.5rem auto;display:block"/>
+              <a class="btn btn-primary btn-sm" href="${PlatoAPI.qrPrintUrl(slug)}" target="_blank" rel="noopener">Print QR / Save PDF</a>
+            </div>`
+          : ""
+      }
     `;
   }
 
@@ -1017,7 +1042,11 @@
     const copy = $("#copy-link");
     if (copy) {
       copy.onclick = async () => {
-        const url = location.origin + location.pathname + "#menu";
+        const slug = state.menu.restaurant.slug;
+        const url =
+          PlatoAPI.isApi() && slug
+            ? PlatoAPI.publicMenuUrl(slug)
+            : location.origin + location.pathname + "#menu";
         try {
           await navigator.clipboard.writeText(url);
           toast(t("copied"));
@@ -1104,6 +1133,26 @@
         }
         toast(t("signOut"));
         renderAdmin();
+      };
+    }
+    const magic = $("#magic-link");
+    if (magic) {
+      magic.onclick = async () => {
+        const email = (document.querySelector('#account-form [name="email"]') || {}).value;
+        if (!email) {
+          toast(t("needName") === "Add a dish name" ? "Enter email" : "Email");
+          return;
+        }
+        try {
+          const res = await PlatoAPI.requestMagicLink(email);
+          toast("Magic link sent");
+          if (res.devLink) {
+            console.info("Magic link (dev):", res.devLink);
+            toast("Check server console for link");
+          }
+        } catch (err) {
+          toast(err.message || "Magic link failed");
+        }
       };
     }
 
@@ -1434,9 +1483,18 @@
   }
 
   async function init() {
+    // Capture magic / OAuth token from redirect
+    const params = new URLSearchParams(location.search);
+    const magicToken = params.get("magic_token");
+    if (magicToken) {
+      PlatoAPI.setToken(magicToken);
+      params.delete("magic_token");
+      const qs = params.toString();
+      history.replaceState({}, "", location.pathname + (qs ? "?" + qs : "") + (location.hash || "#admin"));
+    }
+
     parseHash();
     bindGlobal();
-    // Show shell quickly
     renderChrome();
     try {
       await initData();
@@ -1446,7 +1504,6 @@
       state.settings = PlatoStorage.loadSettings();
     }
     render();
-    // Mode badge in console
     console.info(
       "Plato mode:",
       PlatoAPI.isApi() ? "API backend" : "localStorage offline",
