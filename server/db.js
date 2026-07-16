@@ -28,6 +28,7 @@ function restaurantToJson(row) {
     address: parseJson(row.address_json, {}),
     hours: parseJson(row.hours_json, {}),
     accent: row.accent || "#e85d04",
+    themeId: row.theme_id || "sunset-taco",
     enabledLangs: parseJson(row.enabled_langs_json, ["en", "es"]),
     primaryLang: row.primary_lang || "en",
     createdAt: row.created_at,
@@ -101,6 +102,7 @@ const SQLITE_SCHEMA = `
     address_json TEXT NOT NULL DEFAULT '{}',
     hours_json TEXT NOT NULL DEFAULT '{}',
     accent TEXT DEFAULT '#e85d04',
+    theme_id TEXT DEFAULT 'sunset-taco',
     enabled_langs_json TEXT NOT NULL,
     primary_lang TEXT NOT NULL DEFAULT 'en',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -178,6 +180,7 @@ const PG_SCHEMA = `
     address_json JSONB NOT NULL DEFAULT '{}',
     hours_json JSONB NOT NULL DEFAULT '{}',
     accent TEXT DEFAULT '#e85d04',
+    theme_id TEXT DEFAULT 'sunset-taco',
     enabled_langs_json JSONB NOT NULL DEFAULT '["en","es"]',
     primary_lang TEXT NOT NULL DEFAULT 'en',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -241,6 +244,11 @@ async function init() {
     const { Pool } = require("pg");
     pool = new Pool({ connectionString: config.databaseUrl });
     await pool.query(PG_SCHEMA);
+    await pool
+      .query(
+        "ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS theme_id TEXT DEFAULT 'sunset-taco'"
+      )
+      .catch(() => {});
     console.log("[db] Postgres ready");
     return { driver: "postgres" };
   }
@@ -253,6 +261,11 @@ async function init() {
   db.exec(SQLITE_SCHEMA);
   try {
     db.exec("ALTER TABLE users ADD COLUMN google_id TEXT");
+  } catch {
+    /* ok */
+  }
+  try {
+    db.exec("ALTER TABLE restaurants ADD COLUMN theme_id TEXT DEFAULT 'sunset-taco'");
   } catch {
     /* ok */
   }
@@ -346,6 +359,7 @@ async function getMenuBundle(restaurantId) {
       address: restaurant.address,
       hours: restaurant.hours,
       accent: restaurant.accent,
+      themeId: restaurant.themeId || "sunset-taco",
       slug: restaurant.slug,
     },
     categories: catRows.map(categoryToJson).map((c) => ({

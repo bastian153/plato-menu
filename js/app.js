@@ -22,7 +22,7 @@
     category: "all",
     modal: null,
     photoIndex: 0,
-    adminTab: "stats",
+    adminTab: "setup",
     help: { hunger: null, spice: null, pref: null },
     menu: null,
     settings: { ...DEFAULT_SETTINGS },
@@ -114,6 +114,19 @@
           state.settings.primaryLang ||
           "en",
       };
+    }
+    applyRestaurantTheme();
+  }
+
+  function applyRestaurantTheme() {
+    if (typeof platoApplyTheme !== "function") return;
+    const r = state.menu && state.menu.restaurant;
+    if (!r) return;
+    const theme = platoGetTheme(r.themeId || r.accent || "sunset-taco");
+    // If restaurant has custom accent only, still use theme palette but override accent
+    platoApplyTheme(theme);
+    if (r.accent && r.accent.startsWith("#") && !r.themeId) {
+      document.documentElement.style.setProperty("--accent", r.accent);
     }
   }
 
@@ -452,18 +465,21 @@
     const r = menu.restaurant;
     const root = $("#view-menu");
     if (!root) return;
+    applyRestaurantTheme();
     const cats = menu.categories || [];
     const dishes = (menu.dishes || []).filter(
       (d) => state.category === "all" || d.category === state.category
     );
+    const theme = typeof platoGetTheme === "function" ? platoGetTheme(r.themeId) : null;
 
     root.innerHTML = `
       <div class="menu-wrap">
         <header class="resto-header">
-          <div class="emoji">${r.emoji || "🍽️"}</div>
+          <div class="emoji">${r.emoji || (theme && theme.emoji) || "🍽️"}</div>
           <h1>${escapeHtml(r.name)}</h1>
           <p class="meta">${escapeHtml(loc(r.tagline))} · ${escapeHtml(loc(r.address))}</p>
           <div class="status">${escapeHtml(loc(r.hours))}</div>
+          ${theme ? `<div class="vibe-chip">${escapeHtml(theme.emoji)} ${escapeHtml(theme.name)}</div>` : ""}
         </header>
         <nav class="cats">
           <button class="cat-pill ${state.category === "all" ? "active" : ""}" data-cat="all">${escapeHtml(t("all"))}</button>
@@ -719,6 +735,7 @@
         <p class="admin-hint">${escapeHtml(t("saveHint"))}</p>
 
         <div class="admin-tabs">
+          ${tabBtn("setup", "Setup")}
           ${tabBtn("stats", t("adminStats"))}
           ${tabBtn("menu", t("adminMenu"))}
           ${tabBtn("add", t("adminAdd"))}
@@ -728,7 +745,17 @@
           ${tabBtn("account", t("adminAccount"))}
         </div>
 
+        <div class="admin-panel ${state.adminTab === "setup" ? "active" : ""}">
+          ${renderSetupHtml()}
+        </div>
+
         <div class="admin-panel ${state.adminTab === "stats" ? "active" : ""}">
+          <div class="setup-steps" style="margin-bottom:1rem">
+            <div class="setup-step done"><span>1</span> Account</div>
+            <div class="setup-step ${(state.menu.dishes||[]).length ? "done" : ""}"><span>2</span> Add dishes</div>
+            <div class="setup-step"><span>3</span> Pick vibe</div>
+            <div class="setup-step"><span>4</span> Print QR</div>
+          </div>
           <div class="stat-grid">
             <div class="stat"><div class="n">${state.stats.scans}</div><div class="l">${escapeHtml(t("scans"))}</div></div>
             <div class="stat"><div class="n">${state.stats.nonEn}%</div><div class="l">${escapeHtml(t("langEs"))}</div></div>
@@ -834,6 +861,100 @@
     }
 
     bindAdminEvents(root);
+  }
+
+  function renderSetupHtml() {
+    const r = state.menu.restaurant || {};
+    const themes = typeof PLATO_THEMES !== "undefined" ? PLATO_THEMES : [];
+    const currentTheme = r.themeId || "sunset-taco";
+    const dishCount = (state.menu.dishes || []).length;
+    const slug = r.slug || "taqueria-el-sol";
+    const taglineEn =
+      (r.tagline && (r.tagline.en || r.tagline.es)) || "";
+    const hoursEn = (r.hours && (r.hours.en || r.hours.es)) || "";
+
+    return `
+      <div class="setup-card">
+        <h3 style="margin-bottom:0.35rem">Get live in 4 steps</h3>
+        <p class="source-note" style="margin-bottom:1rem">
+          You type dish names once. Plato translates them. Guests scan a QR and pick their language.
+          No app install. No designer needed.
+        </p>
+
+        <div class="setup-steps">
+          <div class="setup-step done"><span>1</span> Sign in</div>
+          <div class="setup-step ${dishCount ? "done" : "now"}"><span>2</span> Add dishes</div>
+          <div class="setup-step"><span>3</span> Vibe</div>
+          <div class="setup-step"><span>4</span> QR on table</div>
+        </div>
+
+        <form id="setup-basics" class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.75rem">Your restaurant</h3>
+          <label class="field">
+            <span>Name guests see</span>
+            <input name="name" value="${escapeHtml(r.name || "")}" required placeholder="Taquería El Sol" />
+          </label>
+          <label class="field">
+            <span>Emoji (logo-lite)</span>
+            <input name="emoji" value="${escapeHtml(r.emoji || "🌮")}" maxlength="4" style="font-size:1.4rem" />
+          </label>
+          <label class="field">
+            <span>Short tagline</span>
+            <input name="tagline" value="${escapeHtml(taglineEn)}" placeholder="Street tacos · Made fresh" />
+          </label>
+          <label class="field">
+            <span>Hours</span>
+            <input name="hours" value="${escapeHtml(hoursEn)}" placeholder="Open · Closes 11pm" />
+          </label>
+          <button type="submit" class="btn btn-primary" style="width:100%">Save basics</button>
+        </form>
+
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">Pick a vibe</h3>
+          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.85rem">
+            One tap. Guest menu colors match your spot.
+          </p>
+          <div class="theme-grid">
+            ${themes
+              .map(
+                (th) => `
+              <button type="button" class="theme-card ${currentTheme === th.id ? "selected" : ""}" data-theme="${th.id}"
+                style="--preview-a:${th.accent};--preview-b:${th.accent2};--preview-bg:${th.bg}">
+                <div class="theme-swatch"></div>
+                <div class="theme-meta">
+                  <strong>${escapeHtml(th.emoji)} ${escapeHtml(th.name)}</strong>
+                  <span>${escapeHtml(th.blurb)}</span>
+                </div>
+              </button>`
+              )
+              .join("")}
+          </div>
+          <button type="button" class="btn btn-ghost" id="preview-menu" style="width:100%;margin-top:0.75rem">Preview guest menu</button>
+        </div>
+
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">Add your menu</h3>
+          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">
+            ${dishCount} dishes live. Add a dish → write name & description → tap <strong>Translate to all languages</strong> → Save.
+          </p>
+          <button type="button" class="btn btn-primary" data-atab-jump="add" style="width:100%">Add a dish</button>
+        </div>
+
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">Go live</h3>
+          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">
+            Public link: <code>/m/${escapeHtml(slug)}</code>
+          </p>
+          ${
+            PlatoAPI.isApi()
+              ? `<img src="${PlatoAPI.qrPngUrl(slug)}?size=160" width="140" height="140" alt="QR" style="display:block;margin:0.5rem auto;border-radius:8px;background:#fff"/>
+                 <a class="btn btn-primary" href="${PlatoAPI.qrPrintUrl(slug)}" target="_blank" style="width:100%;margin-top:0.5rem;display:block;text-align:center">Print QR for tables</a>
+                 <a class="btn btn-ghost" href="${PlatoAPI.publicMenuUrl(slug)}" target="_blank" style="width:100%;margin-top:0.5rem;display:block;text-align:center">Open public menu</a>`
+              : `<button type="button" class="btn btn-ghost" data-go="menu" style="width:100%">Open menu preview</button>`
+          }
+        </div>
+      </div>
+    `;
   }
 
   function renderAddFormHtml() {
@@ -1013,9 +1134,78 @@
         renderAdmin();
       };
     });
+    root.querySelectorAll("[data-atab-jump]").forEach((b) => {
+      b.onclick = () => {
+        state.adminTab = b.dataset.atabJump;
+        if (state.adminTab === "add" && !state.editDish) state.editDish = emptyDraft();
+        renderAdmin();
+      };
+    });
     root.querySelectorAll("[data-go]").forEach((b) => {
       b.onclick = () => setView(b.dataset.go);
     });
+    // Setup: basics form
+    const setupForm = $("#setup-basics");
+    if (setupForm) {
+      setupForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(setupForm);
+        const name = String(fd.get("name") || "").trim();
+        const emoji = String(fd.get("emoji") || "🍽️").trim();
+        const taglineText = String(fd.get("tagline") || "").trim();
+        const hoursText = String(fd.get("hours") || "").trim();
+        const tagline = { en: taglineText, es: taglineText };
+        const hours = { en: hoursText, es: hoursText };
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.updateRestaurant({ name, emoji, tagline, hours });
+            applyMenuBundle(res.menu);
+          } else {
+            state.menu.restaurant.name = name;
+            state.menu.restaurant.emoji = emoji;
+            state.menu.restaurant.tagline = tagline;
+            state.menu.restaurant.hours = hours;
+            persist();
+          }
+          toast("Saved");
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Save failed");
+        }
+      };
+    }
+    root.querySelectorAll("[data-theme]").forEach((btn) => {
+      btn.onclick = async () => {
+        const themeId = btn.dataset.theme;
+        const theme = platoGetTheme(themeId);
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.updateRestaurant({
+              themeId,
+              accent: theme.accent,
+              emoji: state.menu.restaurant.emoji || theme.emoji,
+            });
+            applyMenuBundle(res.menu);
+          } else {
+            state.menu.restaurant.themeId = themeId;
+            state.menu.restaurant.accent = theme.accent;
+            persist();
+            applyRestaurantTheme();
+          }
+          toast(theme.name + " vibe on");
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Theme failed");
+        }
+      };
+    });
+    const preview = $("#preview-menu");
+    if (preview) {
+      preview.onclick = () => {
+        applyRestaurantTheme();
+        setView("menu");
+      };
+    }
     root.querySelectorAll("[data-toggle-sold]").forEach((b) => {
       b.onclick = async () => {
         const d = state.menu.dishes.find((x) => x.id === b.dataset.toggleSold);

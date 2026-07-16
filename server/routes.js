@@ -334,10 +334,13 @@ router.patch("/me/restaurant", authMiddleware, async (req, res) => {
   const tagline = req.body.tagline || restaurant.tagline;
   const address = req.body.address || restaurant.address;
   const hours = req.body.hours || restaurant.hours;
+  const themeId =
+    req.body.themeId != null ? String(req.body.themeId) : restaurant.themeId || "sunset-taco";
+  const accent = req.body.accent != null ? String(req.body.accent) : restaurant.accent;
 
   await run(
     `UPDATE restaurants SET name=?, emoji=?, primary_lang=?, enabled_langs_json=?,
-     tagline_json=?, address_json=?, hours_json=?, updated_at=? WHERE id=?`,
+     tagline_json=?, address_json=?, hours_json=?, theme_id=?, accent=?, updated_at=? WHERE id=?`,
     [
       name,
       emoji,
@@ -346,6 +349,8 @@ router.patch("/me/restaurant", authMiddleware, async (req, res) => {
       JSON.stringify(tagline),
       JSON.stringify(address),
       JSON.stringify(hours),
+      themeId,
+      accent,
       new Date().toISOString(),
       restaurant.id,
     ]
