@@ -308,6 +308,23 @@ async function getRestaurantByOwner(ownerId) {
   );
 }
 
+async function listRestaurantsByOwner(ownerId) {
+  const rows = await all(
+    "SELECT * FROM restaurants WHERE owner_id = ? ORDER BY created_at ASC",
+    [ownerId]
+  );
+  return rows.map(restaurantToJson);
+}
+
+async function getOwnedRestaurant(ownerId, restaurantId) {
+  if (!restaurantId) return getRestaurantByOwner(ownerId);
+  const row = await get(
+    "SELECT * FROM restaurants WHERE id = ? AND owner_id = ? LIMIT 1",
+    [restaurantId, ownerId]
+  );
+  return restaurantToJson(row);
+}
+
 async function getRestaurantBySlug(slug) {
   if (usePg) {
     return restaurantToJson(
@@ -413,6 +430,8 @@ module.exports = {
   dishToJson,
   categoryToJson,
   getRestaurantByOwner,
+  listRestaurantsByOwner,
+  getOwnedRestaurant,
   getRestaurantBySlug,
   getRestaurantById,
   getMenuBundle,

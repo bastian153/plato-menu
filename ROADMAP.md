@@ -26,6 +26,12 @@
 - [x] **Rate limiting + helmet hardening**
 - [x] **Guest photo submit** (pending owner approval)
 
+## Done (onboarding upgrades)
+
+- [x] **Bulk add dishes** (5+ rows, optional auto-translate)
+- [x] **Scan paper menu** (photo via xAI vision, or paste text)
+- [x] **Multi-restaurant per account** (create/switch clients as setup agent)
+
 ## Next (v1)
 
 - [ ] Order at counter / send to kitchen

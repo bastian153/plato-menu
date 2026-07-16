@@ -581,6 +581,55 @@ a {
   color: var(--muted);
 }
 
+.bulk-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.bulk-head {
+  display: grid;
+  grid-template-columns: 1.2fr 0.55fr 1.2fr;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0.15rem;
+}
+
+.bulk-row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.55fr 1.2fr;
+  gap: 0.35rem;
+}
+
+.bulk-row input {
+  background: var(--bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 0.5rem 0.55rem;
+  color: var(--text);
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.scan-results {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+@media (max-width: 420px) {
+  .bulk-head {
+    display: none;
+  }
+  .bulk-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .cats {
   display: flex;
   gap: 0.5rem;

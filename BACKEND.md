@@ -94,11 +94,22 @@ Provider order when `TRANSLATE_PROVIDER=auto`:
 
 ## Owner API (Bearer)
 
-- `GET /api/me/menu`  
+- `GET /api/me/menu` (optional header `X-Restaurant-Id`)  
+- `GET /api/me/restaurants` · `POST /api/me/restaurants` `{ name }`  
 - `PATCH /api/me/restaurant`  
 - `POST/PUT/DELETE /api/me/dishes…`  
+- `POST /api/me/dishes/bulk` `{ dishes, fromLang, translate }`  
+- `POST /api/me/menu/scan` multipart `photo` **or** JSON `{ text }`  
 - `POST /api/me/upload`  
 - `POST /api/translate/dish`  
 - Photo approve/reject  
 
-See also [TRANSLATION.md](./TRANSLATION.md) for the product flow.
+### Multi-restaurant (setup agent)
+
+One login can own many restaurants. Create per client, switch with `X-Restaurant-Id` (the UI Setup tab does this).
+
+### Menu scan AI
+
+Set `XAI_API_KEY` for photo → dish extraction (SpaceXAI / xAI vision). Without a key, **paste menu text** still works via heuristics/LLM text.
+
+See also [TRANSLATION.md](./TRANSLATION.md) and [OWNER.md](./OWNER.md).

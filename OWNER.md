@@ -36,11 +36,16 @@ They don’t install an app. Guests don’t either.
 - They type dish names/prices (or you type for them as setup service)  
 - They take/upload photos (or use guest photos later)  
 
-**Future “even easier” (not built yet)**
+**Built for easy onboarding**
 
-- Photo of paper menu → AI extract dishes  
+- **Scan paper menu** (photo + AI if `XAI_API_KEY`, or paste text)  
+- **Fast add 5 dishes** at once + auto-translate  
+- **Multiple restaurants** per account (you manage many clients)  
+
+**Still later**
+
 - Import from Toast / Square  
-- You (agency) build first menu for $99 setup fee  
+- You (agency) $99 setup fee productized as a checklist  
 
 ---
 

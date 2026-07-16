@@ -32,6 +32,15 @@
     stats: { scans: 0, nonEn: 0, topDish: null },
     loading: true,
     loadError: null,
+    restaurants: [],
+    scanDraft: null,
+    bulkRows: [
+      { name: "", description: "", price: "", category: "tacos" },
+      { name: "", description: "", price: "", category: "tacos" },
+      { name: "", description: "", price: "", category: "tacos" },
+      { name: "", description: "", price: "", category: "tacos" },
+      { name: "", description: "", price: "", category: "tacos" },
+    ],
   };
 
   function t(key) {
@@ -183,9 +192,16 @@
                 restaurantName: (me.restaurant && me.restaurant.name) || "",
                 password: "",
               };
+              if (me.restaurant && me.restaurant.id) {
+                PlatoAPI.setRestaurantId(me.restaurant.id);
+              }
               if (me.menu) applyMenuBundle(me.menu);
               const full = await PlatoAPI.getMyMenu();
               applyMenuBundle(full.menu);
+              if (full.restaurants) state.restaurants = full.restaurants;
+              if (full.activeRestaurantId) {
+                PlatoAPI.setRestaurantId(full.activeRestaurantId);
+              }
               if (full.stats) {
                 state.stats = {
                   scans: full.stats.scans || 0,
@@ -872,34 +888,66 @@
     const taglineEn =
       (r.tagline && (r.tagline.en || r.tagline.es)) || "";
     const hoursEn = (r.hours && (r.hours.en || r.hours.es)) || "";
+    const restos = state.restaurants || [];
+    const draft = state.scanDraft;
+    const bulk = state.bulkRows || [];
 
     return `
       <div class="setup-card">
-        <h3 style="margin-bottom:0.35rem">Get live in 4 steps</h3>
+        <h3 style="margin-bottom:0.35rem">Get live fast</h3>
         <p class="source-note" style="margin-bottom:1rem">
-          You type dish names once. Plato translates them. Guests scan a QR and pick their language.
-          No app install. No designer needed.
+          Scan a paper menu, bulk-type dishes, or add one-by-one. Translate once. Pick a vibe. Print QR.
         </p>
 
         <div class="setup-steps">
           <div class="setup-step done"><span>1</span> Sign in</div>
-          <div class="setup-step ${dishCount ? "done" : "now"}"><span>2</span> Add dishes</div>
+          <div class="setup-step ${dishCount ? "done" : "now"}"><span>2</span> Menu</div>
           <div class="setup-step"><span>3</span> Vibe</div>
-          <div class="setup-step"><span>4</span> QR on table</div>
+          <div class="setup-step"><span>4</span> QR</div>
         </div>
 
+        ${
+          PlatoAPI.isApi()
+            ? `<div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">Restaurants you manage</h3>
+          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.65rem">
+            Setup agents: create a new spot per client, then switch.
+          </p>
+          <label class="field">
+            <span>Active restaurant</span>
+            <select id="switch-resto">
+              ${
+                restos.length
+                  ? restos
+                      .map(
+                        (x) =>
+                          `<option value="${x.id}" ${x.id === (r.id || PlatoAPI.getRestaurantId()) ? "selected" : ""}>${escapeHtml(x.name)} · /m/${escapeHtml(x.slug)}</option>`
+                      )
+                      .join("")
+                  : `<option value="">${escapeHtml(r.name || "Current")}</option>`
+              }
+            </select>
+          </label>
+          <div class="field-row">
+            <input id="new-resto-name" placeholder="New client restaurant name" style="flex:1;background:var(--bg);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:0.65rem;color:var(--text)" />
+            <button type="button" class="btn btn-primary btn-sm" id="create-resto">Create</button>
+          </div>
+        </div>`
+            : ""
+        }
+
         <form id="setup-basics" class="dish-form" style="margin-top:1rem">
-          <h3 style="margin-bottom:0.75rem">Your restaurant</h3>
+          <h3 style="margin-bottom:0.75rem">Basics</h3>
           <label class="field">
             <span>Name guests see</span>
             <input name="name" value="${escapeHtml(r.name || "")}" required placeholder="Taquería El Sol" />
           </label>
           <label class="field">
-            <span>Emoji (logo-lite)</span>
+            <span>Emoji</span>
             <input name="emoji" value="${escapeHtml(r.emoji || "🌮")}" maxlength="4" style="font-size:1.4rem" />
           </label>
           <label class="field">
-            <span>Short tagline</span>
+            <span>Tagline</span>
             <input name="tagline" value="${escapeHtml(taglineEn)}" placeholder="Street tacos · Made fresh" />
           </label>
           <label class="field">
@@ -910,10 +958,77 @@
         </form>
 
         <div class="dish-form" style="margin-top:1rem">
-          <h3 style="margin-bottom:0.5rem">Pick a vibe</h3>
-          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.85rem">
-            One tap. Guest menu colors match your spot.
+          <h3 style="margin-bottom:0.5rem">📷 Scan paper menu</h3>
+          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.65rem">
+            Photo the board or menu. With <code>XAI_API_KEY</code> we extract dishes by AI. Without it, paste text below.
           </p>
+          <label class="field">
+            <span>Menu photo</span>
+            <input type="file" id="scan-photo" accept="image/*" capture="environment" />
+          </label>
+          <label class="field">
+            <span>Or paste menu text</span>
+            <textarea id="scan-text" rows="4" placeholder="Carnitas ........ $4.50&#10;Al Pastor ....... $4.50&#10;Horchata ........ $3.00"></textarea>
+          </label>
+          <button type="button" class="btn btn-primary" id="run-scan" style="width:100%">Extract dishes</button>
+          <div id="scan-status" style="margin-top:0.5rem;font-size:0.85rem;color:var(--muted)"></div>
+          ${
+            draft && draft.dishes && draft.dishes.length
+              ? `<div class="scan-results">
+                  <p style="margin:0.75rem 0 0.35rem;font-weight:600">${draft.dishes.length} found ${draft.provider ? "· " + escapeHtml(draft.provider) : ""}</p>
+                  <p style="color:var(--muted);font-size:0.8rem;margin-bottom:0.5rem">${escapeHtml(draft.notes || "Review, then import.")}</p>
+                  <div class="bulk-table">
+                    ${draft.dishes
+                      .map(
+                        (d, i) => `
+                      <div class="bulk-row">
+                        <input data-scan-name="${i}" value="${escapeHtml(d.name)}" />
+                        <input data-scan-price="${i}" type="number" step="0.25" value="${d.price || ""}" placeholder="$" />
+                        <input data-scan-desc="${i}" value="${escapeHtml(d.description || "")}" placeholder="desc" />
+                      </div>`
+                      )
+                      .join("")}
+                  </div>
+                  <label class="lang-toggle" style="margin:0.65rem 0">
+                    <input type="checkbox" id="scan-translate" checked />
+                    <span>Auto-translate on import</span>
+                  </label>
+                  <button type="button" class="btn btn-primary" id="import-scan" style="width:100%">Import all to menu</button>
+                </div>`
+              : ""
+          }
+        </div>
+
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">⚡ Fast add (5 at once)</h3>
+          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.65rem">
+            Type name + price. Leave blank rows empty.
+          </p>
+          <div class="bulk-table">
+            <div class="bulk-head"><span>Name</span><span>Price</span><span>Description</span></div>
+            ${bulk
+              .map(
+                (row, i) => `
+              <div class="bulk-row">
+                <input data-bulk-name="${i}" value="${escapeHtml(row.name)}" placeholder="Dish name" />
+                <input data-bulk-price="${i}" type="number" step="0.25" value="${escapeHtml(row.price)}" placeholder="0.00" />
+                <input data-bulk-desc="${i}" value="${escapeHtml(row.description)}" placeholder="Optional" />
+              </div>`
+              )
+              .join("")}
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="bulk-add-row" style="margin:0.5rem 0">+ More rows</button>
+          <label class="lang-toggle" style="margin:0.35rem 0 0.65rem">
+            <input type="checkbox" id="bulk-translate" checked />
+            <span>Translate to all languages when saving</span>
+          </label>
+          <button type="button" class="btn btn-primary" id="bulk-save" style="width:100%">Save bulk dishes</button>
+          <button type="button" class="btn btn-ghost" data-atab-jump="add" style="width:100%;margin-top:0.5rem">Or add one detailed dish</button>
+          <p style="color:var(--muted);font-size:0.8rem;margin-top:0.65rem">${dishCount} dishes currently live</p>
+        </div>
+
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">Pick a vibe</h3>
           <div class="theme-grid">
             ${themes
               .map(
@@ -933,17 +1048,9 @@
         </div>
 
         <div class="dish-form" style="margin-top:1rem">
-          <h3 style="margin-bottom:0.5rem">Add your menu</h3>
-          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">
-            ${dishCount} dishes live. Add a dish → write name & description → tap <strong>Translate to all languages</strong> → Save.
-          </p>
-          <button type="button" class="btn btn-primary" data-atab-jump="add" style="width:100%">Add a dish</button>
-        </div>
-
-        <div class="dish-form" style="margin-top:1rem">
           <h3 style="margin-bottom:0.5rem">Go live</h3>
           <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">
-            Public link: <code>/m/${escapeHtml(slug)}</code>
+            Public: <code>/m/${escapeHtml(slug)}</code>
           </p>
           ${
             PlatoAPI.isApi()
@@ -1205,6 +1312,190 @@
         applyRestaurantTheme();
         setView("menu");
       };
+    }
+
+    // Multi-restaurant switch / create
+    const switchR = $("#switch-resto");
+    if (switchR) {
+      switchR.onchange = async () => {
+        const id = switchR.value;
+        if (!id) return;
+        PlatoAPI.setRestaurantId(id);
+        try {
+          const full = await PlatoAPI.getMyMenu();
+          applyMenuBundle(full.menu);
+          if (full.restaurants) state.restaurants = full.restaurants;
+          if (full.stats) state.stats = full.stats;
+          toast("Switched restaurant");
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Switch failed");
+        }
+      };
+    }
+    const createR = $("#create-resto");
+    if (createR) {
+      createR.onclick = async () => {
+        const name = ($("#new-resto-name") && $("#new-resto-name").value.trim()) || "New Restaurant";
+        try {
+          const res = await PlatoAPI.createRestaurant(name);
+          if (res.restaurant) PlatoAPI.setRestaurantId(res.restaurant.id);
+          if (res.menu) applyMenuBundle(res.menu);
+          if (res.restaurants) state.restaurants = res.restaurants;
+          toast("Created " + name);
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Create failed");
+        }
+      };
+    }
+
+    // Scan paper menu
+    const runScan = $("#run-scan");
+    if (runScan) {
+      runScan.onclick = async () => {
+        const status = $("#scan-status");
+        const fileInput = $("#scan-photo");
+        const text = ($("#scan-text") && $("#scan-text").value) || "";
+        const file = fileInput && fileInput.files && fileInput.files[0];
+        if (!file && !text.trim()) {
+          toast("Add a photo or paste text");
+          return;
+        }
+        if (!PlatoAPI.isApi() || !PlatoAPI.getToken()) {
+          toast("Sign in with API for scan");
+          return;
+        }
+        if (status) status.textContent = "Extracting…";
+        try {
+          const result = file
+            ? await PlatoAPI.scanMenuPhoto(file)
+            : await PlatoAPI.scanMenuText(text);
+          state.scanDraft = result;
+          if (status) {
+            status.textContent = result.hasAiKey
+              ? `Done (${result.provider})`
+              : "No XAI_API_KEY — used text/heuristic. Set key for photo AI.";
+          }
+          toast((result.dishes || []).length + " dishes found");
+          renderAdmin();
+        } catch (err) {
+          if (status) status.textContent = err.message || "Scan failed";
+          toast(err.message || "Scan failed");
+        }
+      };
+    }
+    const importScan = $("#import-scan");
+    if (importScan) {
+      importScan.onclick = async () => {
+        const dishes = [];
+        $all("[data-scan-name]").forEach((inp) => {
+          const i = inp.dataset.scanName;
+          const name = inp.value.trim();
+          if (!name) return;
+          const price = parseFloat(($(`[data-scan-price="${i}"]`) || {}).value) || 0;
+          const description = (($(`[data-scan-desc="${i}"]`) || {}).value || "").trim();
+          dishes.push({ name, price, description, category: "tacos" });
+        });
+        if (!dishes.length) {
+          toast("Nothing to import");
+          return;
+        }
+        const translate = ($("#scan-translate") || {}).checked;
+        try {
+          const res = await PlatoAPI.bulkCreateDishes(dishes, {
+            fromLang: primaryLang(),
+            translate,
+          });
+          applyMenuBundle(res.menu);
+          state.scanDraft = null;
+          toast("Imported " + res.created);
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Import failed");
+        }
+      };
+    }
+
+    // Bulk fast add
+    const bulkAddRow = $("#bulk-add-row");
+    if (bulkAddRow) {
+      bulkAddRow.onclick = () => {
+        collectBulkRowsFromDom();
+        state.bulkRows.push({ name: "", description: "", price: "", category: "tacos" });
+        state.bulkRows.push({ name: "", description: "", price: "", category: "tacos" });
+        renderAdmin();
+      };
+    }
+    const bulkSave = $("#bulk-save");
+    if (bulkSave) {
+      bulkSave.onclick = async () => {
+        collectBulkRowsFromDom();
+        const dishes = state.bulkRows
+          .filter((r) => r.name && r.name.trim())
+          .map((r) => ({
+            name: r.name.trim(),
+            description: (r.description || "").trim(),
+            price: parseFloat(r.price) || 0,
+            category: r.category || "tacos",
+          }));
+        if (!dishes.length) {
+          toast("Fill at least one name");
+          return;
+        }
+        const translate = ($("#bulk-translate") || {}).checked;
+        try {
+          if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
+            const res = await PlatoAPI.bulkCreateDishes(dishes, {
+              fromLang: primaryLang(),
+              translate,
+            });
+            applyMenuBundle(res.menu);
+            toast("Saved " + res.created);
+          } else {
+            // local fallback
+            for (const d of dishes) {
+              const id = "dish-" + Date.now() + Math.random().toString(36).slice(2, 6);
+              state.menu.dishes.push({
+                id,
+                category: d.category,
+                price: d.price,
+                spicy: 0,
+                popular: false,
+                soldOut: false,
+                name: { en: d.name, es: d.name },
+                desc: { en: d.description || d.name, es: d.description || d.name },
+                photos: [],
+                photoCount: 0,
+              });
+            }
+            persist();
+            toast("Saved locally " + dishes.length);
+          }
+          state.bulkRows = [
+            { name: "", description: "", price: "", category: "tacos" },
+            { name: "", description: "", price: "", category: "tacos" },
+            { name: "", description: "", price: "", category: "tacos" },
+            { name: "", description: "", price: "", category: "tacos" },
+            { name: "", description: "", price: "", category: "tacos" },
+          ];
+          renderAdmin();
+        } catch (err) {
+          toast(err.message || "Bulk save failed");
+        }
+      };
+    }
+
+    function collectBulkRowsFromDom() {
+      $all("[data-bulk-name]").forEach((inp) => {
+        const i = Number(inp.dataset.bulkName);
+        if (!state.bulkRows[i]) state.bulkRows[i] = { name: "", description: "", price: "", category: "tacos" };
+        state.bulkRows[i].name = inp.value;
+        const p = $(`[data-bulk-price="${i}"]`);
+        const d = $(`[data-bulk-desc="${i}"]`);
+        if (p) state.bulkRows[i].price = p.value;
+        if (d) state.bulkRows[i].description = d.value;
+      });
     }
     root.querySelectorAll("[data-toggle-sold]").forEach((b) => {
       b.onclick = async () => {

@@ -5,10 +5,12 @@
 window.PlatoAPI = (function () {
   const TOKEN_KEY = "plato_token_v1";
   const MODE_KEY = "plato_mode_v1"; // "api" | "local"
+  const RESTO_KEY = "plato_restaurant_id_v1";
 
   let baseUrl = "";
   let mode = localStorage.getItem(MODE_KEY) || "unknown";
   let token = localStorage.getItem(TOKEN_KEY) || null;
+  let restaurantId = localStorage.getItem(RESTO_KEY) || null;
 
   function setToken(t) {
     token = t;
@@ -18,6 +20,16 @@ window.PlatoAPI = (function () {
 
   function getToken() {
     return token;
+  }
+
+  function setRestaurantId(id) {
+    restaurantId = id || null;
+    if (id) localStorage.setItem(RESTO_KEY, id);
+    else localStorage.removeItem(RESTO_KEY);
+  }
+
+  function getRestaurantId() {
+    return restaurantId;
   }
 
   function isApi() {
@@ -31,6 +43,9 @@ window.PlatoAPI = (function () {
     );
     if (token && !headers.Authorization) {
       headers.Authorization = "Bearer " + token;
+    }
+    if (restaurantId && !headers["X-Restaurant-Id"]) {
+      headers["X-Restaurant-Id"] = restaurantId;
     }
     if (options.body && !(options.body instanceof FormData)) {
       headers["Content-Type"] = "application/json";
@@ -131,6 +146,37 @@ window.PlatoAPI = (function () {
     return request("/api/me/dishes", { method: "POST", body: dish });
   }
 
+  async function bulkCreateDishes(dishes, { fromLang, translate } = {}) {
+    return request("/api/me/dishes/bulk", {
+      method: "POST",
+      body: { dishes, fromLang, translate: !!translate },
+    });
+  }
+
+  async function scanMenuPhoto(file) {
+    const fd = new FormData();
+    fd.append("photo", file);
+    return request("/api/me/menu/scan", { method: "POST", body: fd });
+  }
+
+  async function scanMenuText(text) {
+    return request("/api/me/menu/scan", {
+      method: "POST",
+      body: { text },
+    });
+  }
+
+  async function listRestaurants() {
+    return request("/api/me/restaurants");
+  }
+
+  async function createRestaurant(name) {
+    return request("/api/me/restaurants", {
+      method: "POST",
+      body: { name },
+    });
+  }
+
   async function updateDish(dishId, dish) {
     return request(`/api/me/dishes/${encodeURIComponent(dishId)}`, {
       method: "PUT",
@@ -197,6 +243,8 @@ window.PlatoAPI = (function () {
     isApi,
     getToken,
     setToken,
+    getRestaurantId,
+    setRestaurantId,
     logout,
     register,
     login,
@@ -210,6 +258,11 @@ window.PlatoAPI = (function () {
     getPublicMenu,
     updateRestaurant,
     createDish,
+    bulkCreateDishes,
+    scanMenuPhoto,
+    scanMenuText,
+    listRestaurants,
+    createRestaurant,
     updateDish,
     toggleSoldOut,
     deleteDish,

@@ -9,6 +9,8 @@ const {
   run,
   all,
   getRestaurantByOwner,
+  listRestaurantsByOwner,
+  getOwnedRestaurant,
   getRestaurantBySlug,
   getRestaurantById,
   getMenuBundle,
@@ -28,11 +30,12 @@ const {
 const { translateDishFields, translateText, pickProvider } = require("./services/translate");
 const { saveImage, driverInfo } = require("./services/storage");
 const { sendMagicLink } = require("./services/mail");
+const { extractFromImage, extractFromText } = require("./services/menuScan");
 
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype.startsWith("image/")) return cb(new Error("Only images allowed"));
     cb(null, true);
@@ -40,12 +43,43 @@ const upload = multer({
 });
 
 async function requireRestaurant(req, res) {
-  const restaurant = await getRestaurantByOwner(req.user.id);
+  const headerId =
+    req.headers["x-restaurant-id"] ||
+    req.query.restaurantId ||
+    (req.body && req.body.restaurantId);
+  const restaurant = await getOwnedRestaurant(req.user.id, headerId || null);
   if (!restaurant) {
     res.status(404).json({ error: "No restaurant for this account" });
     return null;
   }
   return restaurant;
+}
+
+async function insertDish(restaurantId, body, sortOrder) {
+  const dishId = body.id || id("dsh");
+  const name = body.name || {};
+  await run(
+    `INSERT INTO dishes
+     (id, restaurant_id, category_slug, price, spicy, popular, sold_out, name_json, desc_json, tags_json, allergens_json, photos_json, photo_count, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      dishId,
+      restaurantId,
+      body.category || "tacos",
+      Number(body.price) || 0,
+      Number(body.spicy) || 0,
+      body.popular ? 1 : 0,
+      body.soldOut ? 1 : 0,
+      JSON.stringify(name),
+      JSON.stringify(body.desc || {}),
+      JSON.stringify(body.tags || {}),
+      JSON.stringify(body.allergens || {}),
+      JSON.stringify(body.photos || []),
+      (body.photos || []).length || 0,
+      sortOrder,
+    ]
+  );
+  return get("SELECT * FROM dishes WHERE id = ?", [dishId]);
 }
 
 /* ---------- Auth: password ---------- */
@@ -310,6 +344,50 @@ router.get("/auth/me", authMiddleware, async (req, res) => {
   });
 });
 
+/* ---------- Multi-restaurant (setup agent / multi-location) ---------- */
+
+router.get("/me/restaurants", authMiddleware, async (req, res) => {
+  const list = await listRestaurantsByOwner(req.user.id);
+  res.json({ restaurants: list });
+});
+
+router.post("/me/restaurants", authMiddleware, async (req, res) => {
+  try {
+    const restaurantName = String(req.body.name || "New Restaurant").trim();
+    const restId = id("rst");
+    const slug = await uniqueSlug(restaurantName);
+    await run(
+      `INSERT INTO restaurants
+       (id, owner_id, slug, name, emoji, tagline_json, address_json, hours_json, enabled_langs_json, primary_lang, theme_id)
+       VALUES (?, ?, ?, ?, '🍽️', '{}', '{}', '{}', ?, 'en', 'sunset-taco')`,
+      [
+        restId,
+        req.user.id,
+        slug,
+        restaurantName,
+        JSON.stringify(["en", "es", "zh", "ko", "ja", "vi", "pt", "fr", "ar"]),
+      ]
+    );
+    await run(
+      `INSERT INTO categories (id, restaurant_id, slug, labels_json, sort_order) VALUES (?, ?, 'tacos', ?, 0)`,
+      [id("cat"), restId, JSON.stringify({ en: "Mains", es: "Platos" })]
+    );
+    await run(
+      `INSERT INTO categories (id, restaurant_id, slug, labels_json, sort_order) VALUES (?, ?, 'sides', ?, 1)`,
+      [id("cat"), restId, JSON.stringify({ en: "Sides", es: "Acompañamientos" })]
+    );
+    const restaurant = await getRestaurantById(restId);
+    res.status(201).json({
+      restaurant,
+      restaurants: await listRestaurantsByOwner(req.user.id),
+      menu: await getMenuBundle(restId),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not create restaurant" });
+  }
+});
+
 /* ---------- Owner menu ---------- */
 
 router.get("/me/menu", authMiddleware, async (req, res) => {
@@ -318,6 +396,8 @@ router.get("/me/menu", authMiddleware, async (req, res) => {
   res.json({
     menu: await getMenuBundle(restaurant.id),
     stats: await getStats(restaurant.id),
+    restaurants: await listRestaurantsByOwner(req.user.id),
+    activeRestaurantId: restaurant.id,
   });
 });
 
@@ -367,7 +447,6 @@ router.post("/me/dishes", authMiddleware, async (req, res) => {
   const restaurant = await requireRestaurant(req, res);
   if (!restaurant) return;
   const body = req.body || {};
-  const dishId = body.id || id("dsh");
   const name = body.name || {};
   if (!Object.values(name).some(Boolean)) {
     return res.status(400).json({ error: "Dish name required" });
@@ -376,29 +455,112 @@ router.post("/me/dishes", authMiddleware, async (req, res) => {
     "SELECT COALESCE(MAX(sort_order), 0) as m FROM dishes WHERE restaurant_id = ?",
     [restaurant.id]
   );
-  await run(
-    `INSERT INTO dishes
-     (id, restaurant_id, category_slug, price, spicy, popular, sold_out, name_json, desc_json, tags_json, allergens_json, photos_json, photo_count, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      dishId,
-      restaurant.id,
-      body.category || "tacos",
-      Number(body.price) || 0,
-      Number(body.spicy) || 0,
-      body.popular ? 1 : 0,
-      body.soldOut ? 1 : 0,
-      JSON.stringify(name),
-      JSON.stringify(body.desc || {}),
-      JSON.stringify(body.tags || {}),
-      JSON.stringify(body.allergens || {}),
-      JSON.stringify(body.photos || []),
-      (body.photos || []).length || 0,
-      (maxRow && maxRow.m) + 1,
-    ]
-  );
-  const row = await get("SELECT * FROM dishes WHERE id = ?", [dishId]);
+  const row = await insertDish(restaurant.id, body, (maxRow && maxRow.m) + 1);
   res.status(201).json({ dish: dishToJson(row), menu: await getMenuBundle(restaurant.id) });
+});
+
+/** Bulk create dishes (fast onboarding) */
+router.post("/me/dishes/bulk", authMiddleware, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+    const items = Array.isArray(req.body.dishes) ? req.body.dishes : [];
+    if (!items.length) return res.status(400).json({ error: "dishes array required" });
+
+    const fromLang = String(req.body.fromLang || restaurant.primaryLang || "en");
+    const translate = !!req.body.translate;
+    const langs = restaurant.enabledLangs || ["en", "es"];
+
+    const maxRow = await get(
+      "SELECT COALESCE(MAX(sort_order), 0) as m FROM dishes WHERE restaurant_id = ?",
+      [restaurant.id]
+    );
+    let sort = (maxRow && maxRow.m) || 0;
+    const created = [];
+
+    for (const item of items.slice(0, 40)) {
+      const nameStr = String(item.name || "").trim();
+      if (!nameStr) continue;
+      const descStr = String(item.description || item.desc || "").trim();
+      let nameMap = { [fromLang]: nameStr };
+      let descMap = { [fromLang]: descStr || nameStr };
+      if (translate) {
+        try {
+          const tr = await translateDishFields({
+            name: nameStr,
+            desc: descStr || nameStr,
+            fromLang,
+            toLangs: langs,
+          });
+          nameMap = tr.name;
+          descMap = tr.desc;
+        } catch (e) {
+          console.warn("bulk translate fail", e.message);
+        }
+      }
+      sort += 1;
+      const row = await insertDish(
+        restaurant.id,
+        {
+          name: nameMap,
+          desc: descMap,
+          price: item.price,
+          category: item.category || "tacos",
+          spicy: item.spicy || 0,
+        },
+        sort
+      );
+      created.push(dishToJson(row));
+    }
+
+    res.status(201).json({
+      created: created.length,
+      dishes: created,
+      menu: await getMenuBundle(restaurant.id),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Bulk create failed" });
+  }
+});
+
+/**
+ * Scan paper menu photo or pasted text → draft dishes (not saved until bulk confirm)
+ */
+router.post("/me/menu/scan", authMiddleware, (req, res, next) => {
+  const ct = req.headers["content-type"] || "";
+  if (ct.includes("multipart/form-data")) {
+    return upload.single("photo")(req, res, (err) => {
+      if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+      next();
+    });
+  }
+  next();
+}, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+
+    let result;
+    if (req.file) {
+      result = await extractFromImage(req.file.buffer, req.file.mimetype);
+    } else if (req.body && req.body.text) {
+      result = await extractFromText(String(req.body.text));
+    } else {
+      return res.status(400).json({
+        error: "Send multipart photo or JSON { text }",
+      });
+    }
+
+    res.json({
+      ...result,
+      restaurantId: restaurant.id,
+      hasAiKey: !!(process.env.XAI_API_KEY || config.xaiApiKey),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Scan failed" });
+  }
 });
 
 router.put("/me/dishes/:dishId", authMiddleware, async (req, res) => {

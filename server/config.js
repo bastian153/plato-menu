@@ -70,4 +70,5 @@ module.exports = {
     authMax: Number(process.env.RATE_LIMIT_AUTH_MAX || 40),
   },
   trustProxy: process.env.TRUST_PROXY === "1" || process.env.TRUST_PROXY === "true",
+  xaiApiKey: process.env.XAI_API_KEY || "",
 };
