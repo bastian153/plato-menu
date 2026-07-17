@@ -15,7 +15,9 @@ const {
   getRestaurantById,
   getMenuBundle,
   getStats,
+  getAnalytics,
   dishToJson,
+  orderToJson,
   driver,
 } = require("./db");
 const {
@@ -29,7 +31,7 @@ const {
 } = require("./auth");
 const { translateDishFields, translateText, pickProvider } = require("./services/translate");
 const { saveImage, driverInfo } = require("./services/storage");
-const { sendMagicLink } = require("./services/mail");
+const { sendMagicLink, sendOrderNotify } = require("./services/mail");
 const { extractFromImage, extractFromText } = require("./services/menuScan");
 
 const router = express.Router();
@@ -490,10 +492,33 @@ router.patch("/me/restaurant", authMiddleware, async (req, res) => {
   const themeId =
     req.body.themeId != null ? String(req.body.themeId) : restaurant.themeId || "sunset-taco";
   const accent = req.body.accent != null ? String(req.body.accent) : restaurant.accent;
+  const locationName =
+    req.body.locationName != null
+      ? String(req.body.locationName).trim()
+      : restaurant.locationName || "";
+  const chainName =
+    req.body.chainName != null ? String(req.body.chainName).trim() : restaurant.chainName || "";
+  const constellationEnabled =
+    req.body.constellationEnabled != null
+      ? req.body.constellationEnabled
+        ? 1
+        : 0
+      : restaurant.constellationEnabled
+        ? 1
+        : 0;
+  const ordersEnabled =
+    req.body.ordersEnabled != null
+      ? req.body.ordersEnabled
+        ? 1
+        : 0
+      : restaurant.ordersEnabled !== false
+        ? 1
+        : 0;
 
   await run(
     `UPDATE restaurants SET name=?, emoji=?, primary_lang=?, enabled_langs_json=?,
-     tagline_json=?, address_json=?, hours_json=?, theme_id=?, accent=?, updated_at=? WHERE id=?`,
+     tagline_json=?, address_json=?, hours_json=?, theme_id=?, accent=?,
+     location_name=?, chain_name=?, constellation_enabled=?, orders_enabled=?, updated_at=? WHERE id=?`,
     [
       name,
       emoji,
@@ -504,6 +529,10 @@ router.patch("/me/restaurant", authMiddleware, async (req, res) => {
       JSON.stringify(hours),
       themeId,
       accent,
+      locationName,
+      chainName,
+      constellationEnabled,
+      ordersEnabled,
       new Date().toISOString(),
       restaurant.id,
     ]
@@ -1060,6 +1089,265 @@ router.get("/public/:slug/qr-print", async (req, res) => {
 </body></html>`);
 });
 
+/* ---------- Analytics ---------- */
+
+router.get("/me/analytics", authMiddleware, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+    res.json({ analytics: await getAnalytics(restaurant.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Analytics failed" });
+  }
+});
+
+/* ---------- Counter orders (kitchen tickets) ---------- */
+
+router.get("/me/orders", authMiddleware, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+    const status = req.query.status ? String(req.query.status) : null;
+    const rows = status
+      ? await all(
+          "SELECT * FROM orders WHERE restaurant_id = ? AND status = ? ORDER BY created_at DESC LIMIT 100",
+          [restaurant.id, status]
+        )
+      : await all(
+          "SELECT * FROM orders WHERE restaurant_id = ? ORDER BY created_at DESC LIMIT 100",
+          [restaurant.id]
+        );
+    res.json({ orders: (rows || []).map(orderToJson) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Orders failed" });
+  }
+});
+
+router.patch("/me/orders/:orderId", authMiddleware, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+    const existing = await get(
+      "SELECT * FROM orders WHERE id = ? AND restaurant_id = ?",
+      [req.params.orderId, restaurant.id]
+    );
+    if (!existing) return res.status(404).json({ error: "Order not found" });
+    const status = String(req.body.status || existing.status);
+    if (!["pending", "preparing", "ready", "done", "cancelled"].includes(status)) {
+      return res.status(400).json({ error: "Invalid status" });
+    }
+    await run("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?", [
+      status,
+      new Date().toISOString(),
+      req.params.orderId,
+    ]);
+    const row = await get("SELECT * FROM orders WHERE id = ?", [req.params.orderId]);
+    res.json({ order: orderToJson(row) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Update failed" });
+  }
+});
+
+router.post("/public/:slug/orders", async (req, res) => {
+  try {
+    const restaurant = await getRestaurantBySlug(req.params.slug);
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    if (restaurant.ordersEnabled === false) {
+      return res.status(403).json({ error: "Orders disabled for this restaurant" });
+    }
+    const itemsIn = Array.isArray(req.body.items) ? req.body.items : [];
+    if (!itemsIn.length) return res.status(400).json({ error: "items required" });
+    const items = [];
+    let total = 0;
+    for (const it of itemsIn.slice(0, 30)) {
+      const dishId = String(it.dishId || it.id || "");
+      const qty = Math.min(20, Math.max(1, Number(it.qty) || 1));
+      let name = String(it.name || "").trim();
+      let price = Number(it.price) || 0;
+      if (dishId) {
+        const dish = await get(
+          "SELECT * FROM dishes WHERE id = ? AND restaurant_id = ?",
+          [dishId, restaurant.id]
+        );
+        if (dish) {
+          const dj = dishToJson(dish);
+          if (dj.soldOut) continue;
+          name = (dj.name && (dj.name.en || Object.values(dj.name)[0])) || name;
+          price = Number(dj.price) || price;
+        }
+      }
+      if (!name) continue;
+      items.push({ dishId, name, price, qty });
+      total += price * qty;
+    }
+    if (!items.length) return res.status(400).json({ error: "No valid items" });
+    const tip = Math.max(0, Number(req.body.tip) || 0);
+    const orderId = id("ord");
+    const tableCode = String(req.body.tableCode || req.body.table || "").trim().slice(0, 32);
+    const guestName = String(req.body.guestName || "").trim().slice(0, 80);
+    const note = String(req.body.note || "").trim().slice(0, 500);
+    const lang = String(req.body.lang || "").slice(0, 8);
+    await run(
+      `INSERT INTO orders (id, restaurant_id, table_code, guest_name, items_json, note, status, total, tip, lang, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+      [
+        orderId,
+        restaurant.id,
+        tableCode,
+        guestName,
+        JSON.stringify(items),
+        note,
+        total,
+        tip,
+        lang,
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ]
+    );
+    const order = orderToJson(await get("SELECT * FROM orders WHERE id = ?", [orderId]));
+    // Best-effort owner email if owner has email on user record
+    try {
+      const owner = await get("SELECT email FROM users WHERE id = ?", [restaurant.ownerId]);
+      if (owner && owner.email) {
+        await sendOrderNotify({
+          to: owner.email,
+          restaurantName: restaurant.name,
+          order,
+        });
+      }
+    } catch (e) {
+      console.warn("order notify", e.message);
+    }
+    res.status(201).json({ order });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Order failed" });
+  }
+});
+
+/* ---------- Stripe tip / pay (optional) ---------- */
+
+router.get("/me/billing/status", authMiddleware, async (req, res) => {
+  res.json({
+    stripeConfigured: !!config.stripe.secretKey,
+    publishableKey: config.stripe.publishableKey || "",
+  });
+});
+
+router.post("/public/:slug/pay-tip", async (req, res) => {
+  try {
+    if (!config.stripe.secretKey) {
+      return res.status(503).json({
+        error: "Stripe not configured. Set STRIPE_SECRET_KEY to accept tips.",
+      });
+    }
+    const restaurant = await getRestaurantBySlug(req.params.slug);
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    const amount = Math.round(Number(req.body.amount || req.body.tip || 0) * 100);
+    if (amount < 50) return res.status(400).json({ error: "Minimum tip $0.50" });
+    const orderId = String(req.body.orderId || "").trim();
+    // Stripe Checkout Session via REST (no SDK required)
+    const params = new URLSearchParams();
+    params.append("mode", "payment");
+    params.append("success_url", `${config.publicBaseUrl}/m/${restaurant.slug}?paid=1`);
+    params.append("cancel_url", `${config.publicBaseUrl}/m/${restaurant.slug}?paid=0`);
+    params.append("line_items[0][price_data][currency]", "usd");
+    params.append("line_items[0][price_data][product_data][name]", `Tip · ${restaurant.name}`);
+    params.append("line_items[0][price_data][unit_amount]", String(amount));
+    params.append("line_items[0][quantity]", "1");
+    if (orderId) params.append("metadata[orderId]", orderId);
+    params.append("metadata[restaurantId]", restaurant.id);
+
+    const stripeRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.stripe.secretKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params.toString(),
+    });
+    const data = await stripeRes.json();
+    if (!stripeRes.ok) {
+      return res.status(502).json({ error: data.error?.message || "Stripe error" });
+    }
+    if (orderId && data.id) {
+      await run("UPDATE orders SET stripe_session_id = ?, tip = ?, updated_at = ? WHERE id = ? AND restaurant_id = ?", [
+        data.id,
+        amount / 100,
+        new Date().toISOString(),
+        orderId,
+        restaurant.id,
+      ]).catch(() => {});
+    }
+    res.json({ url: data.url, sessionId: data.id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Payment failed" });
+  }
+});
+
+/* ---------- POS export (Square/Toast-friendly JSON) ---------- */
+
+router.get("/me/pos/export", authMiddleware, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+    const menu = await getMenuBundle(restaurant.id);
+    const format = String(req.query.format || "json").toLowerCase();
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      provider: "plato",
+      format: "square-toast-compatible-v1",
+      location: {
+        name: restaurant.name,
+        locationName: restaurant.locationName || restaurant.name,
+        chainName: restaurant.chainName || "",
+        slug: restaurant.slug,
+      },
+      categories: (menu.categories || []).map((c, i) => ({
+        id: c.id,
+        name: (c.labels && (c.labels.en || Object.values(c.labels)[0])) || c.id,
+        sortOrder: c.sortOrder != null ? c.sortOrder : i,
+      })),
+      items: (menu.dishes || []).map((d) => ({
+        id: d.id,
+        name: (d.name && (d.name.en || Object.values(d.name)[0])) || d.id,
+        description: (d.desc && (d.desc.en || Object.values(d.desc)[0])) || "",
+        price: Number(d.price) || 0,
+        categoryId: d.category,
+        soldOut: !!d.soldOut,
+        spicy: d.spicy || 0,
+        photos: d.photos || [],
+      })),
+      notes:
+        "Import this JSON into your POS setup tool, or use as a source of truth. Full Square/Toast OAuth sync can be layered on later with POS credentials.",
+    };
+    if (format === "csv") {
+      const lines = ["id,name,price,category,sold_out"];
+      payload.items.forEach((i) => {
+        lines.push(
+          [
+            i.id,
+            `"${String(i.name).replace(/"/g, '""')}"`,
+            i.price,
+            i.categoryId,
+            i.soldOut ? 1 : 0,
+          ].join(",")
+        );
+      });
+      res.type("text/csv").send(lines.join("\n"));
+      return;
+    }
+    res.json(payload);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Export failed" });
+  }
+});
+
 router.get("/health", (_req, res) => {
   res.json({
     ok: true,
@@ -1069,6 +1357,8 @@ router.get("/health", (_req, res) => {
     storage: driverInfo(),
     translate: pickProvider(),
     oauthGoogle: !!config.oauth.googleClientId,
+    stripe: !!config.stripe.secretKey,
+    features: ["orders", "analytics", "pos-export", "constellation"],
   });
 });
 

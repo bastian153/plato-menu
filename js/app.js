@@ -25,6 +25,8 @@
     modal: null,
     photoIndex: 0,
     adminTab: "home",
+    orders: [],
+    analytics: null,
     help: { hunger: null, spice: null, pref: null },
     menu: null,
     settings: { ...DEFAULT_SETTINGS },
@@ -1722,6 +1724,8 @@
         <div class="admin-tabs-wrap">
           <div class="admin-tabs" role="tablist" aria-label="Owner dashboard">
             ${tabBtn("home", t("adminHome") || "Home")}
+            ${tabBtn("orders", t("adminOrders") || "Orders")}
+            ${tabBtn("analytics", t("adminAnalytics") || "Analytics")}
             ${tabBtn("menu", t("adminMenu"))}
             ${tabBtn("import", t("adminImport") || "Import")}
             ${tabBtn("sections", t("adminSections") || "Sections")}
@@ -1735,6 +1739,14 @@
 
         <div class="admin-panel ${state.adminTab === "home" ? "active" : ""}">
           ${renderOwnerHomeHtml(top)}
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "orders" ? "active" : ""}">
+          ${renderOrdersHtml()}
+        </div>
+
+        <div class="admin-panel ${state.adminTab === "analytics" ? "active" : ""}">
+          ${renderAnalyticsHtml()}
         </div>
 
         <div class="admin-panel ${state.adminTab === "menu" ? "active" : ""}">
@@ -1842,6 +1854,44 @@
     bindAdminEvents(root);
     // Keep the active owner tab visible in the horizontal sticky bar
     requestAnimationFrame(() => scrollAdminTabIntoView(root, state.adminTab));
+    if (state.adminTab === "orders" && !state._ordersLoadedOnce) {
+      state._ordersLoadedOnce = true;
+      loadOwnerOrders(true);
+    }
+    if (state.adminTab === "analytics" && !state._analyticsLoadedOnce) {
+      state._analyticsLoadedOnce = true;
+      loadOwnerAnalytics(true);
+    }
+  }
+
+  async function loadOwnerOrders(rerender) {
+    if (!PlatoAPI.isApi() || !PlatoAPI.getToken()) return;
+    try {
+      const res = await PlatoAPI.listOrders();
+      state.orders = res.orders || [];
+      if (rerender && state.adminTab === "orders") {
+        state._ordersLoadedOnce = true;
+        renderAdmin();
+      }
+    } catch (err) {
+      console.warn(err);
+      toast(err.message || "Orders load failed");
+    }
+  }
+
+  async function loadOwnerAnalytics(rerender) {
+    if (!PlatoAPI.isApi() || !PlatoAPI.getToken()) return;
+    try {
+      const res = await PlatoAPI.getAnalytics();
+      state.analytics = res.analytics || null;
+      if (rerender && state.adminTab === "analytics") {
+        state._analyticsLoadedOnce = true;
+        renderAdmin();
+      }
+    } catch (err) {
+      console.warn(err);
+      toast(err.message || "Analytics failed");
+    }
   }
 
   function scrollAdminTabIntoView(root, tabId) {
@@ -2185,12 +2235,28 @@
             <input name="emoji" value="${escapeHtml(r.emoji || "🌮")}" maxlength="4" style="font-size:1.4rem" />
           </label>
           <label class="field">
+            <span>Chain / brand (optional)</span>
+            <input name="chainName" value="${escapeHtml(r.chainName || "")}" placeholder="El Sol Group" />
+          </label>
+          <label class="field">
+            <span>Location label (multi-location)</span>
+            <input name="locationName" value="${escapeHtml(r.locationName || "")}" placeholder="Downtown · 2nd St" />
+          </label>
+          <label class="field">
             <span>Tagline</span>
             <input name="tagline" value="${escapeHtml(taglineEn)}" placeholder="Street tacos · Made fresh" />
           </label>
           <label class="field">
             <span>Hours</span>
             <input name="hours" value="${escapeHtml(hoursEn)}" placeholder="Open · Closes 11pm" />
+          </label>
+          <label class="lang-toggle" style="margin-bottom:0.75rem">
+            <input type="checkbox" name="constellationEnabled" ${r.constellationEnabled ? "checked" : ""} />
+            <span>Enable Constellation map mode (guest experience)</span>
+          </label>
+          <label class="lang-toggle" style="margin-bottom:0.75rem">
+            <input type="checkbox" name="ordersEnabled" ${r.ordersEnabled !== false ? "checked" : ""} />
+            <span>Accept counter orders</span>
           </label>
           <button type="submit" class="btn btn-primary" style="width:100%">Save basics</button>
         </form>
@@ -2308,6 +2374,117 @@
       <div>
         ${renderAccountHtml()}
         ${renderRestaurantsManageHtml()}
+      </div>
+    `;
+  }
+
+
+  function renderOrdersHtml() {
+    const orders = state.orders || [];
+    const r = state.menu.restaurant || {};
+    return `
+      <div class="orders-panel">
+        <div class="menu-panel-head">
+          <div>
+            <h3 style="margin:0">${escapeHtml(t("adminOrders") || "Orders")}</h3>
+            <p style="color:var(--muted);font-size:0.85rem;margin:0.25rem 0 0">Counter tickets from the guest menu</p>
+          </div>
+          <button type="button" class="btn btn-sm btn-ghost" id="refresh-orders">Refresh</button>
+        </div>
+        <label class="lang-toggle" style="margin-bottom:0.85rem">
+          <input type="checkbox" id="orders-enabled" ${r.ordersEnabled !== false ? "checked" : ""} />
+          <span>Accept counter orders on public menu</span>
+        </label>
+        ${
+          !orders.length
+            ? `<div class="empty-menu-state"><p>No orders yet. Guests can send tickets from the public menu.</p></div>`
+            : orders
+                .map((o) => {
+                  const items = (o.items || [])
+                    .map((i) => `${i.qty || 1}× ${escapeHtml(i.name)}`)
+                    .join(", ");
+                  return `<div class="order-card status-${escapeHtml(o.status)}">
+                    <div class="order-card-top">
+                      <strong>${escapeHtml(o.tableCode || "Walk-in")}${o.guestName ? " · " + escapeHtml(o.guestName) : ""}</strong>
+                      <span class="order-status">${escapeHtml(o.status)}</span>
+                    </div>
+                    <p class="order-items">${items}</p>
+                    <div class="order-meta">$${Number(o.total || 0).toFixed(2)}${o.tip ? " · tip $" + Number(o.tip).toFixed(2) : ""}${o.note ? " · " + escapeHtml(o.note) : ""}</div>
+                    <div class="order-actions">
+                      ${["pending", "preparing", "ready", "done", "cancelled"]
+                        .map(
+                          (s) =>
+                            `<button type="button" class="btn btn-sm ${o.status === s ? "btn-primary" : "btn-ghost"}" data-order-status="${escapeHtml(o.id)}" data-status="${s}">${s}</button>`
+                        )
+                        .join("")}
+                    </div>
+                  </div>`;
+                })
+                .join("")
+        }
+      </div>
+    `;
+  }
+
+  function renderAnalyticsHtml() {
+    const a = state.analytics;
+    if (!a) {
+      return `<div class="empty-menu-state"><p>Loading analytics…</p><button type="button" class="btn btn-ghost btn-sm" id="refresh-analytics">Load</button></div>`;
+    }
+    return `
+      <div class="analytics-panel">
+        <div class="menu-panel-head">
+          <h3 style="margin:0">${escapeHtml(t("adminAnalytics") || "Analytics")}</h3>
+          <button type="button" class="btn btn-sm btn-ghost" id="refresh-analytics">Refresh</button>
+        </div>
+        <div class="stat-grid">
+          <div class="stat"><div class="n">${a.scans || 0}</div><div class="l">Menu opens</div></div>
+          <div class="stat"><div class="n">${a.nonEn || 0}%</div><div class="l">Non-English</div></div>
+          <div class="stat"><div class="n">${(a.orders && a.orders.total) || 0}</div><div class="l">Orders</div></div>
+        </div>
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">Top dishes</h3>
+          ${(a.topDishes || []).length
+            ? (a.topDishes || [])
+                .map(
+                  (d) =>
+                    `<div class="analytics-row"><span>${escapeHtml(d.name)}</span><strong>${d.opens}</strong></div>`
+                )
+                .join("")
+            : `<p style="color:var(--muted);font-size:0.85rem">No dish opens yet.</p>`}
+        </div>
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">Languages</h3>
+          ${(a.languages || []).length
+            ? (a.languages || [])
+                .map(
+                  (l) =>
+                    `<div class="analytics-row"><span>${escapeHtml(l.lang)}</span><strong>${l.opens}</strong></div>`
+                )
+                .join("")
+            : `<p style="color:var(--muted);font-size:0.85rem">No language data yet.</p>`}
+        </div>
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">Daily opens</h3>
+          <div class="analytics-bars">
+            ${(a.dailyOpens || [])
+              .map((d) => {
+                const max = Math.max(1, ...(a.dailyOpens || []).map((x) => x.opens));
+                const h = Math.round((d.opens / max) * 100);
+                return `<div class="analytics-bar" title="${escapeHtml(d.day)}: ${d.opens}">
+                  <div class="analytics-bar-fill" style="height:${h}%"></div>
+                  <span>${escapeHtml(String(d.day).slice(5))}</span>
+                </div>`;
+              })
+              .join("") || "<p style='color:var(--muted)'>No data</p>"}
+          </div>
+        </div>
+        <div class="dish-form" style="margin-top:1rem">
+          <h3 style="margin-bottom:0.5rem">POS export</h3>
+          <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.65rem">Square / Toast–friendly menu JSON or CSV for import tools.</p>
+          <button type="button" class="btn btn-primary" id="pos-export-json" style="width:100%">Download JSON</button>
+          <button type="button" class="btn btn-ghost" id="pos-export-csv" style="width:100%;margin-top:0.5rem">Download CSV</button>
+        </div>
       </div>
     `;
   }
@@ -2483,6 +2660,8 @@
         state.adminTab = normalizeAdminTab(b.dataset.atab);
         if (state.adminTab === "add" && !state.editDish) state.editDish = emptyDraft();
         if (state.adminTab !== "add") state.editDish = null;
+        state._ordersLoadedOnce = false;
+        state._analyticsLoadedOnce = false;
         renderAdmin();
       };
     });
@@ -2490,6 +2669,8 @@
       b.onclick = () => {
         state.adminTab = normalizeAdminTab(b.dataset.atabJump);
         if (state.adminTab === "add" && !state.editDish) state.editDish = emptyDraft();
+        state._ordersLoadedOnce = false;
+        state._analyticsLoadedOnce = false;
         renderAdmin();
       };
     });
@@ -2506,17 +2687,34 @@
         const emoji = String(fd.get("emoji") || "🍽️").trim();
         const taglineText = String(fd.get("tagline") || "").trim();
         const hoursText = String(fd.get("hours") || "").trim();
+        const locationName = String(fd.get("locationName") || "").trim();
+        const chainName = String(fd.get("chainName") || "").trim();
+        const constellationEnabled = !!(setupForm.querySelector('[name="constellationEnabled"]') || {}).checked;
+        const ordersEnabled = !!(setupForm.querySelector('[name="ordersEnabled"]') || {}).checked;
         const tagline = { en: taglineText, es: taglineText };
         const hours = { en: hoursText, es: hoursText };
         try {
           if (PlatoAPI.isApi() && PlatoAPI.getToken()) {
-            const res = await PlatoAPI.updateRestaurant({ name, emoji, tagline, hours });
+            const res = await PlatoAPI.updateRestaurant({
+              name,
+              emoji,
+              tagline,
+              hours,
+              locationName,
+              chainName,
+              constellationEnabled,
+              ordersEnabled,
+            });
             applyMenuBundle(res.menu);
           } else {
             state.menu.restaurant.name = name;
             state.menu.restaurant.emoji = emoji;
             state.menu.restaurant.tagline = tagline;
             state.menu.restaurant.hours = hours;
+            state.menu.restaurant.locationName = locationName;
+            state.menu.restaurant.chainName = chainName;
+            state.menu.restaurant.constellationEnabled = constellationEnabled;
+            state.menu.restaurant.ordersEnabled = ordersEnabled;
             persist();
           }
           toast("Saved");
@@ -2994,6 +3192,72 @@
           renderAdmin();
         } catch (err) {
           toast(err.message || "Save failed");
+        }
+      };
+    }
+
+    const refreshOrders = $("#refresh-orders");
+    if (refreshOrders) refreshOrders.onclick = () => loadOwnerOrders(true);
+    const refreshAnalytics = $("#refresh-analytics");
+    if (refreshAnalytics) refreshAnalytics.onclick = () => loadOwnerAnalytics(true);
+    root.querySelectorAll("[data-order-status]").forEach((btn) => {
+      btn.onclick = async () => {
+        try {
+          await PlatoAPI.updateOrder(btn.dataset.orderStatus, {
+            status: btn.dataset.status,
+          });
+          toast("Order " + btn.dataset.status);
+          loadOwnerOrders();
+        } catch (err) {
+          toast(err.message || "Update failed");
+        }
+      };
+    });
+    const ordersEnabled = $("#orders-enabled");
+    if (ordersEnabled) {
+      ordersEnabled.onchange = async () => {
+        try {
+          const res = await PlatoAPI.updateRestaurant({
+            ordersEnabled: ordersEnabled.checked,
+          });
+          applyMenuBundle(res.menu);
+          toast(ordersEnabled.checked ? "Orders on" : "Orders off");
+        } catch (err) {
+          toast(err.message || "Save failed");
+        }
+      };
+    }
+    const posJson = $("#pos-export-json");
+    if (posJson) {
+      posJson.onclick = async () => {
+        try {
+          const data = await PlatoAPI.downloadPosExport("json");
+          const blob = new Blob([JSON.stringify(data, null, 2)], {
+            type: "application/json",
+          });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "plato-menu-pos.json";
+          a.click();
+          toast("JSON downloaded");
+        } catch (err) {
+          toast(err.message || "Export failed");
+        }
+      };
+    }
+    const posCsv = $("#pos-export-csv");
+    if (posCsv) {
+      posCsv.onclick = async () => {
+        try {
+          const text = await PlatoAPI.downloadPosExport("csv");
+          const blob = new Blob([text], { type: "text/csv" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "plato-menu-pos.csv";
+          a.click();
+          toast("CSV downloaded");
+        } catch (err) {
+          toast(err.message || "Export failed");
         }
       };
     }

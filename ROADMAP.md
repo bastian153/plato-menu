@@ -43,11 +43,18 @@ See [CHECKLIST.md](./CHECKLIST.md) phases 1–4:
 3. **Phase 3** — ✅ Guest site `/m/:slug` parity (sections, help, photos, clean chrome)
 4. **Phase 4** — ✅ Home wizard for new restaurants (basics → import → preview/QR)
 
-## Later (v1 product)
+## Done (v1 product layer)
 
-- [ ] Order at counter / send to kitchen
-- [ ] Payments & tips (Stripe)
-- [ ] Richer analytics dashboard UI
-- [ ] POS integrations (Square, Toast)
-- [ ] Multi-location chains
-- [ ] Magic-link email templates + branded domains
+- [x] Order at counter / kitchen tickets (guest cart → owner Orders tab)
+- [x] Payments & tips (Stripe Checkout when `STRIPE_SECRET_KEY` set)
+- [x] Richer analytics dashboard (top dishes, languages, daily opens, order counts)
+- [x] POS export (Square/Toast-friendly JSON + CSV)
+- [x] Multi-location labels (`chainName` + `locationName` per restaurant)
+- [x] Branded magic-link email templates
+- [x] Constellation guest mode (optional per restaurant)
+
+## Optional next
+
+- [ ] Full Square/Toast OAuth live sync
+- [ ] Stripe webhooks for paid order confirmation
+- [ ] Native Constellation table-session multiplayer

@@ -208,6 +208,57 @@ window.PlatoAPI = (function () {
     });
   }
 
+  async function getAnalytics() {
+    return request("/api/me/analytics");
+  }
+
+  async function listOrders(status) {
+    const q = status ? `?status=${encodeURIComponent(status)}` : "";
+    return request("/api/me/orders" + q);
+  }
+
+  async function updateOrder(orderId, patch) {
+    return request(`/api/me/orders/${encodeURIComponent(orderId)}`, {
+      method: "PATCH",
+      body: patch,
+    });
+  }
+
+  async function createPublicOrder(slug, body) {
+    return request(`/api/public/${encodeURIComponent(slug)}/orders`, {
+      method: "POST",
+      body,
+    });
+  }
+
+  async function createTipCheckout(slug, body) {
+    return request(`/api/public/${encodeURIComponent(slug)}/pay-tip`, {
+      method: "POST",
+      body,
+    });
+  }
+
+  async function billingStatus() {
+    return request("/api/me/billing/status");
+  }
+
+  function posExportUrl(format) {
+    const q = format ? `?format=${encodeURIComponent(format)}` : "";
+    return baseUrl + "/api/me/pos/export" + q;
+  }
+
+  async function downloadPosExport(format) {
+    const headers = { Accept: format === "csv" ? "text/csv" : "application/json" };
+    if (token) headers.Authorization = "Bearer " + token;
+    if (restaurantId) headers["X-Restaurant-Id"] = restaurantId;
+    const res = await fetch(baseUrl + "/api/me/pos/export" + (format ? `?format=${format}` : ""), {
+      headers,
+    });
+    if (!res.ok) throw new Error("Export failed");
+    if (format === "csv") return res.text();
+    return res.json();
+  }
+
   async function updateDish(dishId, dish) {
     return request(`/api/me/dishes/${encodeURIComponent(dishId)}`, {
       method: "PUT",
@@ -298,6 +349,14 @@ window.PlatoAPI = (function () {
     clearMenu,
     syncCategories,
     deleteCategory,
+    getAnalytics,
+    listOrders,
+    updateOrder,
+    createPublicOrder,
+    createTipCheckout,
+    billingStatus,
+    posExportUrl,
+    downloadPosExport,
     updateDish,
     toggleSoldOut,
     deleteDish,

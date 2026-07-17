@@ -31,6 +31,10 @@ function restaurantToJson(row) {
     themeId: row.theme_id || "sunset-taco",
     enabledLangs: parseJson(row.enabled_langs_json, ["en", "es"]),
     primaryLang: row.primary_lang || "en",
+    locationName: row.location_name || "",
+    chainName: row.chain_name || "",
+    constellationEnabled: !!Number(row.constellation_enabled || 0),
+    ordersEnabled: row.orders_enabled == null ? true : !!Number(row.orders_enabled),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -157,8 +161,24 @@ const SQLITE_SCHEMA = `
     used_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    table_code TEXT,
+    guest_name TEXT,
+    items_json TEXT NOT NULL DEFAULT '[]',
+    note TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    total REAL NOT NULL DEFAULT 0,
+    tip REAL NOT NULL DEFAULT 0,
+    lang TEXT,
+    stripe_session_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
   CREATE INDEX IF NOT EXISTS idx_restaurants_owner ON restaurants(owner_id);
   CREATE INDEX IF NOT EXISTS idx_dishes_restaurant ON dishes(restaurant_id);
+  CREATE INDEX IF NOT EXISTS idx_orders_restaurant ON orders(restaurant_id);
 `;
 
 const PG_SCHEMA = `
@@ -235,20 +255,53 @@ const PG_SCHEMA = `
     used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    table_code TEXT,
+    guest_name TEXT,
+    items_json JSONB NOT NULL DEFAULT '[]',
+    note TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    total DOUBLE PRECISION NOT NULL DEFAULT 0,
+    tip DOUBLE PRECISION NOT NULL DEFAULT 0,
+    lang TEXT,
+    stripe_session_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
   CREATE INDEX IF NOT EXISTS idx_restaurants_owner ON restaurants(owner_id);
   CREATE INDEX IF NOT EXISTS idx_dishes_restaurant ON dishes(restaurant_id);
+  CREATE INDEX IF NOT EXISTS idx_orders_restaurant ON orders(restaurant_id);
 `;
+
+async function migrateRestaurantColumns() {
+  const cols = [
+    ["theme_id", "TEXT DEFAULT 'sunset-taco'"],
+    ["location_name", "TEXT DEFAULT ''"],
+    ["chain_name", "TEXT DEFAULT ''"],
+    ["constellation_enabled", "INTEGER DEFAULT 0"],
+    ["orders_enabled", "INTEGER DEFAULT 1"],
+  ];
+  for (const [name, def] of cols) {
+    try {
+      if (usePg) {
+        await pool.query(`ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS ${name} ${def.replace("INTEGER", "INT")}`);
+      } else {
+        db.exec(`ALTER TABLE restaurants ADD COLUMN ${name} ${def}`);
+      }
+    } catch {
+      /* exists */
+    }
+  }
+}
 
 async function init() {
   if (usePg) {
     const { Pool } = require("pg");
     pool = new Pool({ connectionString: config.databaseUrl });
     await pool.query(PG_SCHEMA);
-    await pool
-      .query(
-        "ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS theme_id TEXT DEFAULT 'sunset-taco'"
-      )
-      .catch(() => {});
+    await migrateRestaurantColumns();
     console.log("[db] Postgres ready");
     return { driver: "postgres" };
   }
@@ -264,11 +317,7 @@ async function init() {
   } catch {
     /* ok */
   }
-  try {
-    db.exec("ALTER TABLE restaurants ADD COLUMN theme_id TEXT DEFAULT 'sunset-taco'");
-  } catch {
-    /* ok */
-  }
+  await migrateRestaurantColumns();
   console.log("[db] SQLite", config.dbPath);
   return { driver: "sqlite" };
 }
@@ -378,6 +427,10 @@ async function getMenuBundle(restaurantId) {
       accent: restaurant.accent,
       themeId: restaurant.themeId || "sunset-taco",
       slug: restaurant.slug,
+      locationName: restaurant.locationName || "",
+      chainName: restaurant.chainName || "",
+      constellationEnabled: !!restaurant.constellationEnabled,
+      ordersEnabled: restaurant.ordersEnabled !== false,
     },
     categories: catRows.map(categoryToJson).map((c) => ({
       id: c.slug,
@@ -420,6 +473,93 @@ async function getStats(restaurantId) {
   };
 }
 
+async function getAnalytics(restaurantId) {
+  const stats = await getStats(restaurantId);
+  const dishOpens = await all(
+    `SELECT dish_id as "dishId", COUNT(*) as c
+     FROM menu_events
+     WHERE restaurant_id = ? AND event_type = 'dish_open' AND dish_id IS NOT NULL
+     GROUP BY dish_id
+     ORDER BY c DESC
+     LIMIT 10`,
+    [restaurantId]
+  );
+  const langs = await all(
+    `SELECT COALESCE(lang, 'unknown') as lang, COUNT(*) as c
+     FROM menu_events
+     WHERE restaurant_id = ? AND event_type = 'open'
+     GROUP BY lang
+     ORDER BY c DESC`,
+    [restaurantId]
+  );
+  const last7 = await all(
+    `SELECT substr(created_at, 1, 10) as day, COUNT(*) as c
+     FROM menu_events
+     WHERE restaurant_id = ? AND event_type = 'open'
+     GROUP BY substr(created_at, 1, 10)
+     ORDER BY day DESC
+     LIMIT 14`,
+    [restaurantId]
+  );
+  const orderStats = await get(
+    `SELECT COUNT(*) as total,
+      SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+      SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) as ready,
+      SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done
+     FROM orders WHERE restaurant_id = ?`,
+    [restaurantId]
+  );
+  const dishRows = await all(
+    "SELECT id, name_json FROM dishes WHERE restaurant_id = ?",
+    [restaurantId]
+  );
+  const nameById = {};
+  dishRows.forEach((d) => {
+    const names = parseJson(d.name_json, {});
+    nameById[d.id] = names.en || names.es || Object.values(names)[0] || d.id;
+  });
+  return {
+    ...stats,
+    topDishes: (dishOpens || []).map((r) => ({
+      dishId: r.dishId || r.dishid,
+      name: nameById[r.dishId || r.dishid] || r.dishId,
+      opens: Number(r.c) || 0,
+    })),
+    languages: (langs || []).map((r) => ({
+      lang: r.lang || "unknown",
+      opens: Number(r.c) || 0,
+    })),
+    dailyOpens: (last7 || [])
+      .map((r) => ({ day: r.day, opens: Number(r.c) || 0 }))
+      .reverse(),
+    orders: {
+      total: Number(orderStats && orderStats.total) || 0,
+      pending: Number(orderStats && orderStats.pending) || 0,
+      ready: Number(orderStats && orderStats.ready) || 0,
+      done: Number(orderStats && orderStats.done) || 0,
+    },
+  };
+}
+
+function orderToJson(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    restaurantId: row.restaurant_id,
+    tableCode: row.table_code || "",
+    guestName: row.guest_name || "",
+    items: parseJson(row.items_json, []),
+    note: row.note || "",
+    status: row.status || "pending",
+    total: Number(row.total) || 0,
+    tip: Number(row.tip) || 0,
+    lang: row.lang || "",
+    stripeSessionId: row.stripe_session_id || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 module.exports = {
   init,
   run,
@@ -430,6 +570,7 @@ module.exports = {
   restaurantToJson,
   dishToJson,
   categoryToJson,
+  orderToJson,
   getRestaurantByOwner,
   listRestaurantsByOwner,
   getOwnedRestaurant,
@@ -437,6 +578,7 @@ module.exports = {
   getRestaurantById,
   getMenuBundle,
   getStats,
+  getAnalytics,
   get DB_PATH() {
     return usePg ? "[postgres]" : config.dbPath;
   },

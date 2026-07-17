@@ -199,12 +199,13 @@ Guests should **never** see Owner, Account, or Plato marketing chrome beyond a t
 - [x] After dishes exist: checklist + celebration → Preview / Print QR
 
 ### Phase 5 — Later product (from original roadmap)
-- [ ] Order at counter / kitchen ticket
-- [ ] Payments & tips (Stripe)
-- [ ] Richer analytics UI
-- [ ] POS (Square, Toast)
-- [ ] Multi-location chains (beyond multi-restaurant accounts)
-- [ ] Branded magic-link emails / custom domains
+- [x] Order at counter / kitchen ticket
+- [x] Payments & tips (Stripe when configured)
+- [x] Richer analytics UI
+- [x] POS export JSON/CSV (Square/Toast-friendly)
+- [x] Multi-location labels (chain + location fields)
+- [x] Branded magic-link emails
+- [x] Constellation opt-in guest map mode
 
 ---
 

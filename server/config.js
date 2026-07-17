@@ -71,4 +71,15 @@ module.exports = {
   },
   trustProxy: process.env.TRUST_PROXY === "1" || process.env.TRUST_PROXY === "true",
   xaiApiKey: process.env.XAI_API_KEY || "",
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY || "",
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || "",
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
+  },
+  brand: {
+    name: process.env.PLATO_BRAND_NAME || "Plato",
+    fromName: process.env.PLATO_BRAND_FROM || "Plato",
+    accent: process.env.PLATO_BRAND_ACCENT || "#e85d04",
+    domain: process.env.PLATO_BRAND_DOMAIN || "",
+  },
 };

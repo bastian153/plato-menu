@@ -2468,6 +2468,140 @@ button.linkish {
   font-size: 0.88rem;
 }
 
+/* Orders + analytics */
+.order-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem;
+  margin-bottom: 0.65rem;
+}
+
+.order-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+
+.order-status {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-2);
+}
+
+.order-items {
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+
+.order-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.55rem;
+}
+
+.order-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.analytics-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.analytics-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.35rem;
+  height: 120px;
+  padding-top: 0.5rem;
+}
+
+.analytics-bar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+.analytics-bar-fill {
+  width: 100%;
+  max-width: 28px;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  border-radius: 4px 4px 0 0;
+  min-height: 4px;
+}
+
+.analytics-bar span {
+  font-size: 0.6rem;
+  color: var(--muted);
+}
+
+/* Guest cart bar */
+.cart-bar {
+  position: fixed;
+  bottom: calc(4.5rem + var(--safe-b));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 36;
+  width: min(100% - 2rem, var(--max));
+  display: flex;
+  gap: 0.5rem;
+}
+
+.constellation-map {
+  min-height: 420px;
+  position: relative;
+  margin: 0.75rem 1rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(240, 106, 26, 0.08), transparent 55%),
+    var(--bg-card);
+  overflow: hidden;
+}
+
+.constellation-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 72px;
+  max-width: 110px;
+  padding: 0.45rem 0.5rem;
+  border-radius: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-align: center;
+  cursor: pointer;
+  line-height: 1.25;
+  box-shadow: var(--shadow-sm);
+}
+
+.constellation-node:hover {
+  border-color: var(--accent);
+  z-index: 2;
+}
+
+.constellation-node .cn-price {
+  display: block;
+  color: var(--accent-2);
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+}
+
 /* Sections editor */
 .sections-list {
   display: flex;

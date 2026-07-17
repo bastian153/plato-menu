@@ -112,6 +112,8 @@
           (navigator.language || "en").slice(0, 2);
         let photoIndex = 0;
         let currentDish = null;
+        let cart = [];
+        let viewMode = localStorage.getItem('plato_view_' + slug) || 'list';
         let help = { hunger: null, spice: null, pref: null };
         let navLockUntil = 0;
         let scrollHandler = null;
@@ -276,8 +278,27 @@
                     </nav></div>`
                   : ""
               }
-              <div class="dish-list dish-list-sections">${sectionsHtml}</div>
+              ${
+                r.constellationEnabled
+                  ? `<div style="padding:0.5rem 1rem;display:flex;gap:0.4rem">
+                      <button type="button" class="btn btn-sm ${viewMode==='list'?'btn-primary':'btn-ghost'}" id="mode-list">List</button>
+                      <button type="button" class="btn btn-sm ${viewMode==='map'?'btn-primary':'btn-ghost'}" id="mode-map">Constellation</button>
+                    </div>`
+                  : ""
+              }
+              ${
+                viewMode === "map" && r.constellationEnabled
+                  ? `<div class="constellation-map" id="constellation-map"></div>`
+                  : `<div class="dish-list dish-list-sections">${sectionsHtml}</div>`
+              }
               <p class="public-footer">Powered by <a href="/" rel="noopener">Plato</a></p>
+              ${
+                r.ordersEnabled !== false
+                  ? `<div class="cart-bar" id="cart-bar" style="${cart.length ? "" : "display:none"}">
+                      <button type="button" class="btn btn-primary" id="open-cart" style="flex:1">Order · ${cart.reduce((n,i)=>n+(i.qty||1),0)} items</button>
+                    </div>`
+                  : ""
+              }
               <div class="help-bar">
                 <button type="button" class="btn btn-primary" id="btn-help">${esc(ui("helpBtn") || "Help me choose")}</button>
               </div>
@@ -336,6 +357,34 @@
               showHelp();
             };
           }
+
+          const modeList = document.getElementById("mode-list");
+          const modeMap = document.getElementById("mode-map");
+          if (modeList) modeList.onclick = () => { viewMode = "list"; localStorage.setItem("plato_view_" + slug, viewMode); render(); };
+          if (modeMap) modeMap.onclick = () => { viewMode = "map"; localStorage.setItem("plato_view_" + slug, viewMode); render(); };
+          if (viewMode === "map" && r.constellationEnabled) {
+            const map = document.getElementById("constellation-map");
+            if (map) {
+              dishes.forEach((d, i) => {
+                const n = dishes.length || 1;
+                const angle = (i / n) * Math.PI * 2;
+                const rad = 28 + (i % 3) * 10;
+                const x = 50 + Math.cos(angle) * rad;
+                const y = 50 + Math.sin(angle) * (rad * 0.75);
+                const node = document.createElement("button");
+                node.type = "button";
+                node.className = "constellation-node";
+                node.style.left = x + "%";
+                node.style.top = y + "%";
+                node.innerHTML = esc(tMap(d.name)) + '<span class="cn-price">$' + Number(d.price).toFixed(2) + "</span>";
+                node.onclick = () => openDish(d.id);
+                map.appendChild(node);
+              });
+            }
+          }
+          const openCart = document.getElementById("open-cart");
+          if (openCart) openCart.onclick = showCart;
+
 
           const sections = [...app.querySelectorAll(".menu-section[data-section]")];
           if (sections.length) {
@@ -431,6 +480,11 @@
                     ? ""
                     : `<div class="order-hint">${esc(ui("orderHint") || "Show this screen at the counter")}</div>`
                 }
+                ${
+                  !d.soldOut && menu.restaurant.ordersEnabled !== false
+                    ? `<button type="button" class="btn btn-primary" id="add-cart" style="width:100%;margin-top:0.85rem">Add to order</button>`
+                    : ""
+                }
                 <label class="field" style="margin-top:1rem">
                   <span>Share a photo of this dish (pending approval)</span>
                   <input type="file" id="guest-photo" accept="image/*" capture="environment"/>
@@ -474,6 +528,98 @@
               }
             };
           }
+          const addCart = document.getElementById("add-cart");
+          if (addCart) {
+            addCart.onclick = () => {
+              const existing = cart.find((x) => x.dishId === d.id);
+              if (existing) existing.qty += 1;
+              else
+                cart.push({
+                  dishId: d.id,
+                  name: tMap(d.name),
+                  price: Number(d.price) || 0,
+                  qty: 1,
+                });
+              toast("Added to order");
+              closeModal();
+              render();
+            };
+          }
+        }
+
+        function showCart() {
+          const total = cart.reduce((s, i) => s + i.price * (i.qty || 1), 0);
+          modalRoot.classList.add("open");
+          modalRoot.innerHTML = `
+            <div class="modal-sheet" role="dialog">
+              <div class="modal-body" style="padding-top:1.25rem">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+                  <h2 style="font-family:var(--display);font-size:1.35rem">Your order</h2>
+                  <button class="btn btn-ghost btn-sm" id="cart-x">Close</button>
+                </div>
+                ${cart
+                  .map(
+                    (i, idx) =>
+                      `<div class="analytics-row"><span>${i.qty}× ${esc(i.name)}</span>
+                        <span>$${(i.price * i.qty).toFixed(2)}
+                        <button type="button" data-rm="${idx}" style="margin-left:0.35rem;color:var(--danger)">✕</button></span></div>`
+                  )
+                  .join("") || "<p style=\"color:var(--muted)\">Empty</p>"}
+                <p style="margin:0.85rem 0;font-weight:700">Total $${total.toFixed(2)}</p>
+                <label class="field"><span>Table / name</span><input id="cart-table" placeholder="Table 4" /></label>
+                <label class="field"><span>Note</span><input id="cart-note" placeholder="No onions" /></label>
+                <label class="field"><span>Tip (optional $)</span><input id="cart-tip" type="number" min="0" step="0.5" value="0" /></label>
+                <button type="button" class="btn btn-primary" id="cart-send" style="width:100%">Send to counter</button>
+                <button type="button" class="btn btn-ghost" id="cart-pay" style="width:100%;margin-top:0.5rem">Pay tip with card</button>
+              </div>
+            </div>`;
+          document.getElementById("cart-x").onclick = closeModal;
+          modalRoot.querySelectorAll("[data-rm]").forEach((b) => {
+            b.onclick = () => {
+              cart.splice(Number(b.dataset.rm), 1);
+              showCart();
+            };
+          });
+          document.getElementById("cart-send").onclick = async () => {
+            if (!cart.length) return toast("Add dishes first");
+            try {
+              const res = await fetch(`/api/public/${encodeURIComponent(slug)}/orders`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  items: cart,
+                  tableCode: document.getElementById("cart-table").value,
+                  note: document.getElementById("cart-note").value,
+                  tip: Number(document.getElementById("cart-tip").value) || 0,
+                  lang,
+                }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "Failed");
+              toast("Order sent · " + (data.order && data.order.id));
+              cart = [];
+              closeModal();
+              render();
+            } catch (e) {
+              toast(e.message || "Order failed");
+            }
+          };
+          document.getElementById("cart-pay").onclick = async () => {
+            const tip = Number(document.getElementById("cart-tip").value) || 0;
+            if (tip < 0.5) return toast("Enter a tip of at least $0.50");
+            try {
+              const res = await fetch(`/api/public/${encodeURIComponent(slug)}/pay-tip`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ amount: tip }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "Payment unavailable");
+              if (data.url) location.href = data.url;
+            } catch (e) {
+              toast(e.message || "Stripe not configured");
+            }
+          };
         }
 
         function closeModal() {
