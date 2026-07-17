@@ -2389,6 +2389,85 @@ button.linkish {
   margin-top: 0.25rem;
 }
 
+.onboard-wizard {
+  padding: 1.25rem 1.15rem;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(ellipse 90% 80% at 10% 0%, rgba(240, 106, 26, 0.2), transparent 55%),
+    var(--bg-card);
+  border: 1px solid var(--border);
+}
+
+.onboard-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.onboard-step {
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--muted);
+  background: var(--bg-soft);
+  border-radius: 10px;
+  padding: 0.45rem 0.25rem;
+  border: 1px solid var(--border);
+  line-height: 1.25;
+}
+
+.onboard-step span {
+  display: block;
+  font-weight: 800;
+  font-size: 0.85rem;
+  color: var(--text);
+  margin-bottom: 0.1rem;
+}
+
+.onboard-step.on {
+  border-color: rgba(240, 106, 26, 0.35);
+  color: var(--accent-2);
+}
+
+.onboard-step.on span {
+  color: var(--accent-2);
+}
+
+.onboard-step.now {
+  box-shadow: 0 0 0 1px rgba(240, 106, 26, 0.35);
+  background: var(--accent-soft);
+}
+
+.onboard-card {
+  padding: 0.85rem 0 0.15rem;
+}
+
+.onboard-copy {
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin-bottom: 0.85rem;
+  line-height: 1.45;
+}
+
+.onboard-celebrate {
+  padding: 1.1rem 1rem;
+  border-radius: var(--radius);
+  background: var(--good-soft);
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  text-align: center;
+}
+
+.onboard-celebrate strong {
+  display: block;
+  font-size: 1.05rem;
+  margin-bottom: 0.25rem;
+}
+
+.onboard-celebrate p {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 /* Sections editor */
 .sections-list {
   display: flex;

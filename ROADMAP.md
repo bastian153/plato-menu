@@ -40,8 +40,8 @@ See [CHECKLIST.md](./CHECKLIST.md) phases 1–4:
 
 1. **Phase 1** — ✅ Full-page owner login (`#owner`) + landing CTAs + session chrome + scan auth redirect
 2. **Phase 2** — ✅ Owner shell: Home checklist · Import · Restaurant · Menu · Go live · Profile
-3. **Phase 3** — Guest site `/m/:slug` only (no owner chrome)
-4. **Phase 4** — Guided onboarding (scan → preview → print QR)
+3. **Phase 3** — ✅ Guest site `/m/:slug` parity (sections, help, photos, clean chrome)
+4. **Phase 4** — ✅ Home wizard for new restaurants (basics → import → preview/QR)
 
 ## Later (v1 product)
 

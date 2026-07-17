@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0c0b0a" />
     <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Restaurant menu — languages, photos, real plates." />
     <title>Menu · Plato</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,13 +15,17 @@
     />
     <link rel="stylesheet" href="/css/styles.css" />
     <style>
+      body.public-menu {
+        /* Guest-only chrome: no Plato marketing topbar */
+      }
       .public-bar {
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 0.75rem;
         padding: 0.7rem 1rem;
-        background: rgba(20, 18, 16, 0.72);
+        padding-top: calc(0.7rem + env(safe-area-inset-top, 0px));
+        background: rgba(20, 18, 16, 0.82);
         border-bottom: 1px solid rgba(255, 255, 255, 0.07);
         position: sticky;
         top: 0;
@@ -30,11 +35,39 @@
       }
       .public-bar strong {
         letter-spacing: -0.02em;
+        font-size: 0.95rem;
       }
-      .public-bar .slug {
-        font-size: 0.78rem;
+      .public-bar .tag {
+        font-size: 0.75rem;
         color: var(--muted);
         margin-top: 0.1rem;
+        max-width: 55vw;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* Section chips stick under public language bar */
+      body.public-menu .cats-wrap {
+        top: 56px;
+      }
+      body.public-menu .menu-section {
+        scroll-margin-top: 120px;
+      }
+      body.public-menu .menu-section-title {
+        top: 112px;
+      }
+      body.public-menu .menu-wrap {
+        padding-bottom: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+      }
+      .public-footer {
+        text-align: center;
+        padding: 1.5rem 1rem 0.5rem;
+        font-size: 0.75rem;
+        color: var(--muted-2);
+      }
+      .public-footer a {
+        color: var(--muted);
+        text-decoration: none;
       }
       .err {
         max-width: 420px;
@@ -46,19 +79,24 @@
         border: 1px solid rgba(255, 255, 255, 0.07);
         border-radius: 18px;
       }
+      .loading-public {
+        text-align: center;
+        padding: 4rem 1rem;
+        color: var(--muted);
+      }
     </style>
   </head>
-  <body>
+  <body class="public-menu">
     <div class="public-bar">
       <div>
         <strong id="rest-name">…</strong>
-        <div class="slug" id="rest-slug"></div>
+        <div class="tag" id="rest-tag"></div>
       </div>
       <select id="lang-select" class="lang-select" aria-label="Language"></select>
     </div>
-    <div id="app"></div>
-    <div id="modal-root" class="modal-root"></div>
-    <div id="toast" class="toast"></div>
+    <div id="app"><p class="loading-public">Loading menu…</p></div>
+    <div id="modal-root" class="modal-root" aria-live="polite"></div>
+    <div id="toast" class="toast" role="status"></div>
 
     <script src="/js/langs.js"></script>
     <script src="/js/themes.js"></script>
@@ -74,6 +112,9 @@
           (navigator.language || "en").slice(0, 2);
         let photoIndex = 0;
         let currentDish = null;
+        let help = { hunger: null, spice: null, pref: null };
+        let navLockUntil = 0;
+        let scrollHandler = null;
 
         function tMap(map) {
           if (!map) return "";
@@ -81,16 +122,32 @@
           return map[lang] || map.en || map.es || Object.values(map)[0] || "";
         }
 
+        function ui(key) {
+          try {
+            if (typeof platoT === "function") return platoT(lang, key) || key;
+          } catch (_) {}
+          return key;
+        }
+
         function toast(msg) {
           const el = document.getElementById("toast");
           el.textContent = msg;
           el.classList.add("show");
-          setTimeout(() => el.classList.remove("show"), 2000);
+          setTimeout(() => el.classList.remove("show"), 2200);
+        }
+
+        function esc(s) {
+          return String(s || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
         }
 
         async function load() {
           if (!slug || slug === "m") {
-            app.innerHTML = '<p class="err">Missing restaurant in URL. Use /m/your-slug</p>';
+            app.innerHTML =
+              '<p class="err">Missing restaurant in URL. Use <code>/m/your-slug</code></p>';
             return;
           }
           try {
@@ -100,13 +157,15 @@
             if (!res.ok) throw new Error("Menu not found");
             const data = await res.json();
             menu = data.menu;
-            document.title = `${menu.restaurant.name} · Menu`;
+            document.title = (menu.restaurant.name || "Menu") + " · Menu";
             if (typeof platoApplyTheme === "function") {
               platoApplyTheme(platoGetTheme(menu.restaurant.themeId || "sunset-taco"));
             }
             document.getElementById("rest-name").textContent =
-              (menu.restaurant.emoji || "") + " " + menu.restaurant.name;
-            document.getElementById("rest-slug").textContent = "/m/" + slug;
+              (menu.restaurant.emoji || "🍽️") + " " + menu.restaurant.name;
+            document.getElementById("rest-tag").textContent =
+              tMap(menu.restaurant.tagline) || tMap(menu.restaurant.hours) || "";
+
             const enabled = (menu.settings && menu.settings.enabledLangs) || ["en", "es"];
             if (!enabled.includes(lang)) lang = enabled[0] || "en";
             const sel = document.getElementById("lang-select");
@@ -122,14 +181,17 @@
               localStorage.setItem("plato_lang", lang);
               document.documentElement.lang = lang;
               const meta = (PLATO_LANGS || []).find((x) => x.code === lang);
-              document.documentElement.dir =
-                meta && meta.dir === "rtl" ? "rtl" : "ltr";
+              document.documentElement.dir = meta && meta.dir === "rtl" ? "rtl" : "ltr";
+              document.getElementById("rest-tag").textContent =
+                tMap(menu.restaurant.tagline) || tMap(menu.restaurant.hours) || "";
               render();
             };
             document.documentElement.lang = lang;
+            const meta = (PLATO_LANGS || []).find((x) => x.code === lang);
+            document.documentElement.dir = meta && meta.dir === "rtl" ? "rtl" : "ltr";
             render();
           } catch (e) {
-            app.innerHTML = `<p class="err">Could not load menu for <strong>${slug}</strong>.<br/>${e.message}</p>`;
+            app.innerHTML = `<p class="err">Could not load menu for <strong>${esc(slug)}</strong>.<br/>${esc(e.message)}</p>`;
           }
         }
 
@@ -152,8 +214,9 @@
 
         function dishCard(d) {
           const thumb = (d.photos && d.photos[0]) || "";
+          const spice = "🌶️".repeat(d.spicy || 0);
           return `<button type="button" class="dish-card ${d.soldOut ? "sold" : ""}" data-id="${d.id}">
-            ${thumb ? `<img class="dish-thumb" src="${thumb}" alt=""/>` : `<div class="dish-thumb placeholder-thumb">🍽️</div>`}
+            ${thumb ? `<img class="dish-thumb" src="${thumb}" alt="" loading="lazy"/>` : `<div class="dish-thumb placeholder-thumb">🍽️</div>`}
             <div class="dish-body">
               <div class="dish-top">
                 <div class="dish-name">${esc(tMap(d.name))}</div>
@@ -161,9 +224,10 @@
               </div>
               <p class="dish-desc">${esc(tMap(d.desc))}</p>
               <div class="dish-meta">
-                ${d.popular ? `<span class="badge popular">Popular</span>` : ""}
-                ${d.soldOut ? `<span class="badge sold">Sold out</span>` : ""}
-                ${d.spicy ? `<span class="badge">${"🌶️".repeat(d.spicy)}</span>` : ""}
+                ${d.popular ? `<span class="badge popular">${esc(ui("popular"))}</span>` : ""}
+                ${d.soldOut ? `<span class="badge sold">${esc(ui("soldOut"))}</span>` : ""}
+                ${d.spicy ? `<span class="badge">${esc(ui("spicy"))} ${spice}</span>` : ""}
+                ${(d.photos && d.photos.length) ? `<span class="badge photos">📸 ${d.photos.length}</span>` : ""}
               </div>
             </div>
           </button>`;
@@ -171,6 +235,10 @@
 
         function render() {
           if (!menu) return;
+          if (scrollHandler) {
+            window.removeEventListener("scroll", scrollHandler);
+            scrollHandler = null;
+          }
           const r = menu.restaurant;
           const cats = categoriesWithDishes();
           const dishes = menu.dishes || [];
@@ -185,20 +253,20 @@
                   </section>`;
                 })
                 .join("")
-            : dishes.map(dishCard).join("");
+            : `<div class="dish-list">${dishes.map(dishCard).join("")}</div>`;
 
           app.innerHTML = `
-            <div class="menu-wrap" style="padding-bottom:2rem">
+            <div class="menu-wrap">
               <header class="resto-header">
-                <div class="emoji">${r.emoji || "🍽️"}</div>
+                <div class="emoji">${esc(r.emoji || "🍽️")}</div>
                 <h1>${esc(r.name)}</h1>
-                <p class="meta">${esc(tMap(r.tagline))} · ${esc(tMap(r.address))}</p>
-                <div class="status">${esc(tMap(r.hours))}</div>
+                <p class="meta">${esc(tMap(r.tagline))}${tMap(r.address) ? " · " + esc(tMap(r.address)) : ""}</p>
+                ${tMap(r.hours) ? `<div class="status">${esc(tMap(r.hours))}</div>` : ""}
               </header>
               ${
                 cats.length
                   ? `<div class="cats-wrap"><nav class="cats" aria-label="Menu sections">
-                      <button type="button" class="cat-pill active" data-cat="all">All</button>
+                      <button type="button" class="cat-pill active" data-cat="all">${esc(ui("all") || "All")}</button>
                       ${cats
                         .map(
                           (c) =>
@@ -209,9 +277,12 @@
                   : ""
               }
               <div class="dish-list dish-list-sections">${sectionsHtml}</div>
-              <p class="site-footer">Powered by Plato · <a href="/">plato-menu</a></p>
+              <p class="public-footer">Powered by <a href="/" rel="noopener">Plato</a></p>
+              <div class="help-bar">
+                <button type="button" class="btn btn-primary" id="btn-help">${esc(ui("helpBtn") || "Help me choose")}</button>
+              </div>
             </div>`;
-          let navLockUntil = 0;
+
           const catsNav = app.querySelector(".cats");
 
           function scrollChipIntoView(catId) {
@@ -232,11 +303,12 @@
             }
           }
 
-          function setActive(catId) {
+          function setActive(catId, forceScroll) {
+            const changed = app.querySelector(`.cat-pill.active`)?.dataset?.cat !== catId;
             app.querySelectorAll(".cat-pill").forEach((p) =>
               p.classList.toggle("active", p.dataset.cat === catId)
             );
-            scrollChipIntoView(catId);
+            if (forceScroll || changed) scrollChipIntoView(catId);
           }
 
           app.querySelectorAll("[data-id]").forEach((btn) => {
@@ -245,45 +317,54 @@
           app.querySelectorAll(".cat-pill").forEach((btn) => {
             btn.onclick = () => {
               const cat = btn.dataset.cat;
-              navLockUntil = Date.now() + 800;
+              navLockUntil = Date.now() + 900;
               if (cat === "all") {
                 window.scrollTo({ top: 0, behavior: "smooth" });
-                setActive("all");
+                setActive("all", true);
                 return;
               }
               const el = document.getElementById("section-" + cat);
-              setActive(cat);
+              setActive(cat, true);
               if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
             };
           });
+
+          const helpBtn = document.getElementById("btn-help");
+          if (helpBtn) {
+            helpBtn.onclick = () => {
+              help = { hunger: null, spice: null, pref: null };
+              showHelp();
+            };
+          }
 
           const sections = [...app.querySelectorAll(".menu-section[data-section]")];
           if (sections.length) {
             const pick = () => {
               if (Date.now() < navLockUntil) return;
               const sticky = app.querySelector(".cats-wrap") || app.querySelector(".cats");
-              const offset = (sticky ? sticky.getBoundingClientRect().bottom : 100) + 8;
+              const pubBar = document.querySelector(".public-bar");
+              const offset =
+                (pubBar ? pubBar.getBoundingClientRect().height : 56) +
+                (sticky ? sticky.getBoundingClientRect().height : 48) +
+                4;
               let current = sections[0];
               for (const sec of sections) {
                 if (sec.getBoundingClientRect().top - offset <= 1) current = sec;
                 else break;
               }
-              if (window.scrollY < 40) {
-                setActive("all");
+              if (window.scrollY < 48) {
+                setActive("all", false);
                 return;
               }
               const id = current && current.getAttribute("data-section");
-              if (id) setActive(id);
+              if (id) setActive(id, false);
             };
             let raf = 0;
-            window.addEventListener(
-              "scroll",
-              () => {
-                if (raf) cancelAnimationFrame(raf);
-                raf = requestAnimationFrame(pick);
-              },
-              { passive: true }
-            );
+            scrollHandler = () => {
+              if (raf) cancelAnimationFrame(raf);
+              raf = requestAnimationFrame(pick);
+            };
+            window.addEventListener("scroll", scrollHandler, { passive: true });
             pick();
           }
         }
@@ -305,11 +386,17 @@
           const d = currentDish;
           const photos = d.photos || [];
           const idx = photos.length ? photoIndex % photos.length : 0;
+          const label = !photos.length
+            ? ui("noPhoto") || "No photo yet"
+            : idx === 0
+              ? ui("official") || "From the kitchen"
+              : (ui("guestPhotos") || "Guest photos") + " · " + idx;
           modalRoot.classList.add("open");
           modalRoot.innerHTML = `
-            <div class="modal-sheet">
+            <div class="modal-sheet" role="dialog" aria-modal="true">
               <div class="modal-carousel">
-                <button class="modal-close" id="x">×</button>
+                <button class="modal-close" id="x" aria-label="Close">×</button>
+                <span class="photo-label">${esc(label)}</span>
                 ${
                   photos.length
                     ? `<img src="${photos[idx]}" alt=""/>`
@@ -320,30 +407,39 @@
                     ? `<div class="carousel-nav">
                         <button type="button" id="prev">‹</button>
                         <button type="button" id="next">›</button>
-                      </div>`
+                      </div>
+                      <div class="carousel-dots">${photos
+                        .map((_, i) => `<span class="${i === idx ? "on" : ""}"></span>`)
+                        .join("")}</div>`
                     : ""
                 }
               </div>
               <div class="modal-body">
+                <div class="dish-meta" style="margin-bottom:0.5rem">
+                  ${d.popular ? `<span class="badge popular">${esc(ui("popular"))}</span>` : ""}
+                  ${d.soldOut ? `<span class="badge sold">${esc(ui("soldOut"))}</span>` : ""}
+                </div>
                 <h2>${esc(tMap(d.name))}</h2>
                 <div class="modal-price">$${Number(d.price).toFixed(2)}</div>
                 <p class="modal-desc">${esc(tMap(d.desc))}</p>
-                <div class="order-hint">Show this screen at the counter</div>
+                <div class="modal-section">
+                  <strong>${esc(ui("allergens") || "Allergens")}</strong>
+                  <span>${esc(tMap(d.allergens) || "—")}</span>
+                </div>
+                ${
+                  d.soldOut
+                    ? ""
+                    : `<div class="order-hint">${esc(ui("orderHint") || "Show this screen at the counter")}</div>`
+                }
                 <label class="field" style="margin-top:1rem">
                   <span>Share a photo of this dish (pending approval)</span>
                   <input type="file" id="guest-photo" accept="image/*" capture="environment"/>
                 </label>
               </div>
             </div>`;
-          document.getElementById("x").onclick = () => {
-            modalRoot.classList.remove("open");
-            modalRoot.innerHTML = "";
-          };
+          document.getElementById("x").onclick = closeModal;
           modalRoot.onclick = (e) => {
-            if (e.target === modalRoot) {
-              modalRoot.classList.remove("open");
-              modalRoot.innerHTML = "";
-            }
+            if (e.target === modalRoot) closeModal();
           };
           const prev = document.getElementById("prev");
           const next = document.getElementById("next");
@@ -380,11 +476,107 @@
           }
         }
 
-        function esc(s) {
-          return String(s || "")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
+        function closeModal() {
+          modalRoot.classList.remove("open");
+          modalRoot.innerHTML = "";
+        }
+
+        function suggestDish() {
+          const dishes = (menu.dishes || []).filter((d) => !d.soldOut);
+          if (!dishes.length) return null;
+          let pool = dishes.slice();
+          if (help.spice === "hot") {
+            const hot = pool.filter((d) => (d.spicy || 0) >= 2);
+            if (hot.length) pool = hot;
+          } else if (help.spice === "mild") {
+            const mild = pool.filter((d) => (d.spicy || 0) <= 1);
+            if (mild.length) pool = mild;
+          }
+          if (help.hunger === "light") {
+            const light = pool.filter((d) => Number(d.price) < 12);
+            if (light.length) pool = light;
+          } else if (help.hunger === "full") {
+            const full = pool.filter((d) => Number(d.price) >= 12);
+            if (full.length) pool = full;
+          }
+          if (help.pref === "veg") {
+            const veg = pool.filter((d) => {
+              const t = (tMap(d.name) + " " + tMap(d.desc)).toLowerCase();
+              return /veg|salad|tofu|bean|mushroom|quesadilla|nopal|aguacate|avocado/.test(t);
+            });
+            if (veg.length) pool = veg;
+          }
+          const popular = pool.filter((d) => d.popular);
+          const pick = popular.length ? popular : pool;
+          return pick[Math.floor(Math.random() * pick.length)];
+        }
+
+        function showHelp() {
+          const ready = help.hunger && help.spice && help.pref;
+          const suggestion = ready ? suggestDish() : null;
+          const block = (key, q, opts) => `
+            <div>
+              <div class="help-q">${esc(q)}</div>
+              <div class="help-options">
+                ${opts
+                  .map(
+                    ([val, label]) =>
+                      `<button type="button" data-help="${key}" data-val="${val}" class="${help[key] === val ? "selected" : ""}">${esc(label)}</button>`
+                  )
+                  .join("")}
+              </div>
+            </div>`;
+          modalRoot.classList.add("open");
+          modalRoot.innerHTML = `
+            <div class="modal-sheet" role="dialog">
+              <div class="modal-body" style="padding-top:1.25rem">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+                  <h2 style="font-family:var(--display);font-size:1.35rem">${esc(ui("helpTitle") || "Not sure what to get?")}</h2>
+                  <button class="btn btn-ghost btn-sm" id="help-x">${esc(ui("helpClose") || "Close")}</button>
+                </div>
+                <div class="help-steps">
+                  ${block("hunger", ui("helpQ1") || "How hungry?", [
+                    ["light", ui("helpLight") || "Light bite"],
+                    ["full", ui("helpFull") || "Full meal"],
+                  ])}
+                  ${block("spice", ui("helpQ2") || "Spice level?", [
+                    ["mild", ui("helpMild") || "Mild"],
+                    ["hot", ui("helpHot") || "Bring heat"],
+                  ])}
+                  ${block("pref", ui("helpQ3") || "Prefer?", [
+                    ["meat", ui("helpMeat") || "Meat"],
+                    ["veg", ui("helpVeg") || "Veggie-friendly"],
+                  ])}
+                  ${
+                    suggestion
+                      ? `<div class="help-result">
+                          <div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.35rem">${esc(ui("helpResult") || "We suggest")}</div>
+                          <strong style="font-size:1.15rem">${esc(tMap(suggestion.name))}</strong>
+                          <p style="color:var(--muted);font-size:0.9rem;margin:0.35rem 0 0.75rem">${esc(tMap(suggestion.desc))}</p>
+                          <button class="btn btn-primary btn-sm" id="see-suggest">${esc(ui("seeDish") || "See dish")}</button>
+                        </div>`
+                      : ""
+                  }
+                </div>
+              </div>
+            </div>`;
+          document.getElementById("help-x").onclick = closeModal;
+          modalRoot.onclick = (e) => {
+            if (e.target === modalRoot) closeModal();
+          };
+          modalRoot.querySelectorAll("[data-help]").forEach((btn) => {
+            btn.onclick = () => {
+              help[btn.dataset.help] = btn.dataset.val;
+              showHelp();
+            };
+          });
+          const see = document.getElementById("see-suggest");
+          if (see && suggestion) {
+            see.onclick = () => {
+              closeModal();
+              openDish(suggestion.id);
+            };
+          }
         }
 
         load();

@@ -1974,16 +1974,66 @@
     const previewUrl = publicPreviewUrl();
     const slug = (state.menu.restaurant && state.menu.restaurant.slug) || "";
     const dishCount = (state.menu.dishes || []).length;
+    const isNew = dishCount === 0;
+    const wizardStep = isNew
+      ? !(state.menu.restaurant && state.menu.restaurant.name)
+        ? 1
+        : 2
+      : doneCount < checklist.length
+        ? 3
+        : 4;
+
+    const wizard = isNew
+      ? `
+      <div class="onboard-wizard">
+        <p class="home-kicker">${escapeHtml(t("wizardTitle") || "Get live today")}</p>
+        <h2 class="home-title" style="margin-bottom:0.75rem">${escapeHtml(t("wizardSub") || "Four steps to a guest-ready menu")}</h2>
+        <div class="onboard-steps">
+          <div class="onboard-step ${wizardStep >= 1 ? "on" : ""} ${wizardStep === 1 ? "now" : ""}"><span>1</span> Basics</div>
+          <div class="onboard-step ${wizardStep >= 2 ? "on" : ""} ${wizardStep === 2 ? "now" : ""}"><span>2</span> Import</div>
+          <div class="onboard-step ${wizardStep >= 3 ? "on" : ""} ${wizardStep === 3 ? "now" : ""}"><span>3</span> Preview</div>
+          <div class="onboard-step ${wizardStep >= 4 ? "on" : ""} ${wizardStep === 4 ? "now" : ""}"><span>4</span> QR</div>
+        </div>
+        <div class="onboard-card">
+          ${
+            wizardStep === 1
+              ? `<p class="onboard-copy">Name your restaurant so guests know who you are.</p>
+                 <button type="button" class="btn btn-primary" data-atab-jump="restaurant" style="width:100%">Set restaurant basics</button>`
+              : wizardStep === 2
+                ? `<p class="onboard-copy">Scan a paper menu or bulk-add dishes. Sections come with you.</p>
+                   <button type="button" class="btn btn-primary" data-atab-jump="import" style="width:100%">📷 Scan or import dishes</button>
+                   <button type="button" class="btn btn-ghost" data-atab-jump="add" style="width:100%;margin-top:0.5rem">Add one dish manually</button>`
+                : `<p class="onboard-copy">Review sections, then preview what guests see.</p>
+                   <button type="button" class="btn btn-primary" data-atab-jump="sections" style="width:100%">Review sections</button>`
+          }
+        </div>
+      </div>`
+      : `
+      <div class="home-hero-card">
+        <p class="home-kicker">${escapeHtml(t("adminHome") || "Home")}</p>
+        <h2 class="home-title">${escapeHtml((state.menu.restaurant && state.menu.restaurant.name) || "Your restaurant")}</h2>
+        <p class="home-sub">Setup progress · ${doneCount}/${checklist.length} complete</p>
+        <div class="home-progress-track"><div class="home-progress-fill" style="width:${pct}%"></div></div>
+      </div>`;
+
+    const celebrate =
+      dishCount > 0 && doneCount >= checklist.length - 1
+        ? `<div class="onboard-celebrate">
+            <strong>🎉 Menu is ready</strong>
+            <p>Preview as a guest, then print QR for tables.</p>
+            <a class="btn btn-primary" href="${escapeHtml(previewUrl)}" target="_blank" rel="noopener" style="width:100%;display:block;text-align:center;margin-top:0.65rem">${escapeHtml(t("previewGuest") || "Preview guest menu")}</a>
+            <button type="button" class="btn btn-ghost" data-atab-jump="qr" style="width:100%;margin-top:0.5rem">Print QR</button>
+          </div>`
+        : "";
+
     return `
       <div class="owner-home">
-        <div class="home-hero-card">
-          <p class="home-kicker">${escapeHtml(t("adminHome") || "Home")}</p>
-          <h2 class="home-title">${escapeHtml((state.menu.restaurant && state.menu.restaurant.name) || "Your restaurant")}</h2>
-          <p class="home-sub">Setup progress · ${doneCount}/${checklist.length} complete</p>
-          <div class="home-progress-track"><div class="home-progress-fill" style="width:${pct}%"></div></div>
-        </div>
+        ${wizard}
+        ${celebrate}
 
-        <div class="home-checklist">
+        ${
+          !isNew
+            ? `<div class="home-checklist">
           ${checklist
             .map(
               (c) => `
@@ -1994,20 +2044,30 @@
             </button>`
             )
             .join("")}
-        </div>
+        </div>`
+            : ""
+        }
 
         <div class="home-actions">
-          <button type="button" class="btn btn-primary" data-atab-jump="import" style="width:100%">📷 ${escapeHtml(t("adminImport") || "Import / scan menu")}</button>
+          ${
+            !isNew
+              ? `<button type="button" class="btn btn-primary" data-atab-jump="import" style="width:100%">📷 ${escapeHtml(t("adminImport") || "Import / scan menu")}</button>
           <a class="btn btn-ghost" href="${escapeHtml(previewUrl)}" target="_blank" rel="noopener" style="width:100%;margin-top:0.5rem;display:block;text-align:center">${escapeHtml(t("previewGuest") || "Preview guest menu")}</a>
-          <button type="button" class="btn btn-ghost" data-atab-jump="qr" style="width:100%;margin-top:0.5rem">${escapeHtml(t("adminLive") || "Go live / QR")}</button>
+          <button type="button" class="btn btn-ghost" data-atab-jump="qr" style="width:100%;margin-top:0.5rem">${escapeHtml(t("adminLive") || "Go live / QR")}</button>`
+              : ""
+          }
         </div>
 
-        <div class="stat-grid" style="margin-top:1.25rem">
+        ${
+          !isNew
+            ? `<div class="stat-grid" style="margin-top:1.25rem">
           <div class="stat"><div class="n">${state.stats.scans || 0}</div><div class="l">${escapeHtml(t("scans"))}</div></div>
           <div class="stat"><div class="n">${state.stats.nonEn || 0}%</div><div class="l">${escapeHtml(t("langEs"))}</div></div>
           <div class="stat"><div class="n" style="font-size:0.95rem;padding-top:0.25rem">${escapeHtml(top ? dishName(top) : "—")}</div><div class="l">${escapeHtml(t("topDish"))}</div></div>
         </div>
-        <p style="color:var(--muted);font-size:0.82rem;margin-top:0.85rem;text-align:center">${dishCount} dishes · ${slug ? "/m/" + escapeHtml(slug) : "no public slug yet"}</p>
+        <p style="color:var(--muted);font-size:0.82rem;margin-top:0.85rem;text-align:center">${dishCount} dishes · ${slug ? "/m/" + escapeHtml(slug) : "no public slug yet"}</p>`
+            : ""
+        }
       </div>
     `;
   }

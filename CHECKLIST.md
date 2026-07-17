@@ -186,18 +186,17 @@ Guests should **never** see Owner, Account, or Plato marketing chrome beyond a t
 ### Phase 3 — Guest site polish
 **Outcome:** QR experience feels like the restaurant’s site, not the Plato admin app.
 
-- [ ] Audit `m.html` vs `#menu` SPA — feature parity
-- [ ] Strip any owner/demo chrome from public routes
-- [ ] Phone-frame preview component for owners matches public page
-- [ ] Optional “Powered by Plato” footer only
+- [x] Audit `m.html` vs `#menu` SPA — feature parity (sections, help quiz, dish modal, guest photo)
+- [x] Guest-only chrome (language bar + restaurant name; no owner nav)
+- [x] Sticky section chips under public bar
+- [x] “Powered by Plato” footer only
 
 ### Phase 4 — Onboarding flow
 **Outcome:** First-time owner: login → restaurant basics → scan/import → preview → print QR.
 
-- [ ] Guided wizard (4 steps) for new restaurants
-- [ ] Scan paper menu as primary import path when `XAI_API_KEY` set
-- [ ] After import → review table → save → “Preview as guest”
-- [ ] Celebration step: QR ready to print
+- [x] Guided wizard on Home for empty menus (Basics → Import → Sections)
+- [x] Scan paper menu as primary import path (Import tab)
+- [x] After dishes exist: checklist + celebration → Preview / Print QR
 
 ### Phase 5 — Later product (from original roadmap)
 - [ ] Order at counter / kitchen ticket
