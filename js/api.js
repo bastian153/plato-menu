@@ -146,10 +146,15 @@ window.PlatoAPI = (function () {
     return request("/api/me/dishes", { method: "POST", body: dish });
   }
 
-  async function bulkCreateDishes(dishes, { fromLang, translate } = {}) {
+  async function bulkCreateDishes(dishes, { fromLang, translate, sections } = {}) {
     return request("/api/me/dishes/bulk", {
       method: "POST",
-      body: { dishes, fromLang, translate: !!translate },
+      body: {
+        dishes,
+        fromLang,
+        translate: !!translate,
+        sections: Array.isArray(sections) ? sections : undefined,
+      },
     });
   }
 
@@ -174,6 +179,32 @@ window.PlatoAPI = (function () {
     return request("/api/me/restaurants", {
       method: "POST",
       body: { name },
+    });
+  }
+
+  async function deleteRestaurant(restaurantId) {
+    return request(`/api/me/restaurants/${encodeURIComponent(restaurantId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async function clearMenu() {
+    return request("/api/me/menu/dishes", {
+      method: "DELETE",
+    });
+  }
+
+  async function syncCategories(categories) {
+    return request("/api/me/categories", {
+      method: "PUT",
+      body: { categories },
+    });
+  }
+
+  async function deleteCategory(slug, moveTo) {
+    const q = moveTo ? `?moveTo=${encodeURIComponent(moveTo)}` : "";
+    return request(`/api/me/categories/${encodeURIComponent(slug)}${q}`, {
+      method: "DELETE",
     });
   }
 
@@ -263,6 +294,10 @@ window.PlatoAPI = (function () {
     scanMenuText,
     listRestaurants,
     createRestaurant,
+    deleteRestaurant,
+    clearMenu,
+    syncCategories,
+    deleteCategory,
     updateDish,
     toggleSoldOut,
     deleteDish,

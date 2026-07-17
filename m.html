@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f0e0c" />
+    <meta name="theme-color" content="#0c0b0a" />
+    <meta name="color-scheme" content="dark" />
     <title>Menu · Plato</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,24 +19,32 @@
         justify-content: space-between;
         align-items: center;
         gap: 0.75rem;
-        padding: 0.65rem 1rem;
-        background: color-mix(in srgb, var(--bg) 92%, transparent);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 0.7rem 1rem;
+        background: rgba(20, 18, 16, 0.72);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
         position: sticky;
         top: 0;
         z-index: 50;
-        backdrop-filter: blur(12px);
+        backdrop-filter: blur(18px) saturate(1.2);
+        -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      }
+      .public-bar strong {
+        letter-spacing: -0.02em;
       }
       .public-bar .slug {
-        font-size: 0.8rem;
+        font-size: 0.78rem;
         color: var(--muted);
+        margin-top: 0.1rem;
       }
       .err {
         max-width: 420px;
         margin: 4rem auto;
         text-align: center;
         color: var(--muted);
-        padding: 1rem;
+        padding: 1.25rem;
+        background: var(--bg-card);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 18px;
       }
     </style>
   </head>
@@ -124,11 +133,60 @@
           }
         }
 
+        function catLabel(c) {
+          if (!c) return "";
+          return tMap(c.labels) || c.id || "";
+        }
+
+        function categoriesWithDishes() {
+          const dishes = menu.dishes || [];
+          const used = new Set(dishes.map((d) => d.category).filter(Boolean));
+          const cats = (menu.categories || []).filter((c) => used.has(c.id));
+          dishes.forEach((d) => {
+            if (d.category && !cats.find((c) => c.id === d.category)) {
+              cats.push({ id: d.category, labels: { en: d.category } });
+            }
+          });
+          return cats;
+        }
+
+        function dishCard(d) {
+          const thumb = (d.photos && d.photos[0]) || "";
+          return `<button type="button" class="dish-card ${d.soldOut ? "sold" : ""}" data-id="${d.id}">
+            ${thumb ? `<img class="dish-thumb" src="${thumb}" alt=""/>` : `<div class="dish-thumb placeholder-thumb">🍽️</div>`}
+            <div class="dish-body">
+              <div class="dish-top">
+                <div class="dish-name">${esc(tMap(d.name))}</div>
+                <div class="dish-price">$${Number(d.price).toFixed(2)}</div>
+              </div>
+              <p class="dish-desc">${esc(tMap(d.desc))}</p>
+              <div class="dish-meta">
+                ${d.popular ? `<span class="badge popular">Popular</span>` : ""}
+                ${d.soldOut ? `<span class="badge sold">Sold out</span>` : ""}
+                ${d.spicy ? `<span class="badge">${"🌶️".repeat(d.spicy)}</span>` : ""}
+              </div>
+            </div>
+          </button>`;
+        }
+
         function render() {
           if (!menu) return;
           const r = menu.restaurant;
-          const cats = menu.categories || [];
+          const cats = categoriesWithDishes();
           const dishes = menu.dishes || [];
+          const sectionsHtml = cats.length
+            ? cats
+                .map((c) => {
+                  const list = dishes.filter((d) => d.category === c.id);
+                  if (!list.length) return "";
+                  return `<section class="menu-section" id="section-${esc(c.id)}" data-section="${esc(c.id)}">
+                    <h2 class="menu-section-title">${esc(catLabel(c))}</h2>
+                    ${list.map(dishCard).join("")}
+                  </section>`;
+                })
+                .join("")
+            : dishes.map(dishCard).join("");
+
           app.innerHTML = `
             <div class="menu-wrap" style="padding-bottom:2rem">
               <header class="resto-header">
@@ -137,33 +195,97 @@
                 <p class="meta">${esc(tMap(r.tagline))} · ${esc(tMap(r.address))}</p>
                 <div class="status">${esc(tMap(r.hours))}</div>
               </header>
-              <div class="dish-list">
-                ${dishes
-                  .map((d) => {
-                    const thumb = (d.photos && d.photos[0]) || "";
-                    return `<button type="button" class="dish-card ${d.soldOut ? "sold" : ""}" data-id="${d.id}">
-                      ${thumb ? `<img class="dish-thumb" src="${thumb}" alt=""/>` : `<div class="dish-thumb placeholder-thumb">🍽️</div>`}
-                      <div class="dish-body">
-                        <div class="dish-top">
-                          <div class="dish-name">${esc(tMap(d.name))}</div>
-                          <div class="dish-price">$${Number(d.price).toFixed(2)}</div>
-                        </div>
-                        <p class="dish-desc">${esc(tMap(d.desc))}</p>
-                        <div class="dish-meta">
-                          ${d.popular ? `<span class="badge popular">Popular</span>` : ""}
-                          ${d.soldOut ? `<span class="badge sold">Sold out</span>` : ""}
-                          ${d.spicy ? `<span class="badge">${"🌶️".repeat(d.spicy)}</span>` : ""}
-                        </div>
-                      </div>
-                    </button>`;
-                  })
-                  .join("")}
-              </div>
+              ${
+                cats.length
+                  ? `<div class="cats-wrap"><nav class="cats" aria-label="Menu sections">
+                      <button type="button" class="cat-pill active" data-cat="all">All</button>
+                      ${cats
+                        .map(
+                          (c) =>
+                            `<button type="button" class="cat-pill" data-cat="${esc(c.id)}">${esc(catLabel(c))}</button>`
+                        )
+                        .join("")}
+                    </nav></div>`
+                  : ""
+              }
+              <div class="dish-list dish-list-sections">${sectionsHtml}</div>
               <p class="site-footer">Powered by Plato · <a href="/">plato-menu</a></p>
             </div>`;
+          let navLockUntil = 0;
+          const catsNav = app.querySelector(".cats");
+
+          function scrollChipIntoView(catId) {
+            if (!catsNav) return;
+            const pill = catsNav.querySelector(`.cat-pill[data-cat="${catId}"]`);
+            if (!pill) return;
+            const navRect = catsNav.getBoundingClientRect();
+            const pillRect = pill.getBoundingClientRect();
+            const pad = 24;
+            if (pillRect.left < navRect.left + pad) {
+              catsNav.scrollBy({ left: pillRect.left - navRect.left - pad, behavior: "smooth" });
+            } else if (pillRect.right > navRect.right - pad) {
+              catsNav.scrollBy({ left: pillRect.right - navRect.right + pad, behavior: "smooth" });
+            } else {
+              const delta =
+                pillRect.left + pillRect.width / 2 - (navRect.left + navRect.width / 2);
+              if (Math.abs(delta) > 8) catsNav.scrollBy({ left: delta, behavior: "smooth" });
+            }
+          }
+
+          function setActive(catId) {
+            app.querySelectorAll(".cat-pill").forEach((p) =>
+              p.classList.toggle("active", p.dataset.cat === catId)
+            );
+            scrollChipIntoView(catId);
+          }
+
           app.querySelectorAll("[data-id]").forEach((btn) => {
             btn.onclick = () => openDish(btn.dataset.id);
           });
+          app.querySelectorAll(".cat-pill").forEach((btn) => {
+            btn.onclick = () => {
+              const cat = btn.dataset.cat;
+              navLockUntil = Date.now() + 800;
+              if (cat === "all") {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+                setActive("all");
+                return;
+              }
+              const el = document.getElementById("section-" + cat);
+              setActive(cat);
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            };
+          });
+
+          const sections = [...app.querySelectorAll(".menu-section[data-section]")];
+          if (sections.length) {
+            const pick = () => {
+              if (Date.now() < navLockUntil) return;
+              const sticky = app.querySelector(".cats-wrap") || app.querySelector(".cats");
+              const offset = (sticky ? sticky.getBoundingClientRect().bottom : 100) + 8;
+              let current = sections[0];
+              for (const sec of sections) {
+                if (sec.getBoundingClientRect().top - offset <= 1) current = sec;
+                else break;
+              }
+              if (window.scrollY < 40) {
+                setActive("all");
+                return;
+              }
+              const id = current && current.getAttribute("data-section");
+              if (id) setActive(id);
+            };
+            let raf = 0;
+            window.addEventListener(
+              "scroll",
+              () => {
+                if (raf) cancelAnimationFrame(raf);
+                raf = requestAnimationFrame(pick);
+              },
+              { passive: true }
+            );
+            pick();
+          }
         }
 
         function openDish(id) {

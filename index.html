@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f0e0c" />
+    <meta name="theme-color" content="#0c0b0a" />
+    <meta name="color-scheme" content="dark" />
     <meta
       name="description"
       content="Plato — living restaurant menus in many languages with real plate photos."
@@ -25,10 +26,13 @@
           <span class="brand-label">Plato</span>
         </a>
         <nav class="nav-links">
-          <a href="#menu" data-nav="menu">Menu</a>
-          <a href="#admin" data-nav="admin">Owner</a>
+          <a href="#menu" data-nav="menu">Demo menu</a>
+          <a href="#owner" data-nav="owner">Owner login</a>
         </nav>
-        <div class="lang-switch" role="group" aria-label="Language"></div>
+        <div class="topbar-right">
+          <div class="owner-session" id="owner-session" hidden></div>
+          <div class="lang-switch" role="group" aria-label="Language"></div>
+        </div>
       </header>
 
       <main>
@@ -39,6 +43,7 @@
           </div>
         </section>
         <section id="view-menu" class="view"></section>
+        <section id="view-owner" class="view"></section>
         <section id="view-admin" class="view"></section>
       </main>
       <noscript>

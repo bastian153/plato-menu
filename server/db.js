@@ -382,6 +382,7 @@ async function getMenuBundle(restaurantId) {
     categories: catRows.map(categoryToJson).map((c) => ({
       id: c.slug,
       labels: c.labels,
+      sortOrder: c.sortOrder,
     })),
     dishes: dishRows.map(dishToJson),
     pendingPhotos: pending,

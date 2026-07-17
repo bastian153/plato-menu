@@ -1,5 +1,7 @@
 # Roadmap
 
+**Living tracker (done / partial / next + redesign IA):** see **[CHECKLIST.md](./CHECKLIST.md)**.
+
 ## Done (v0.1–v0.3)
 
 - [x] Guest multi-language menu (15 languages)
@@ -32,7 +34,16 @@
 - [x] **Scan paper menu** (photo via xAI vision, or paste text)
 - [x] **Multi-restaurant per account** (create/switch clients as setup agent)
 
-## Next (v1)
+## Next — UX redesign (priority)
+
+See [CHECKLIST.md](./CHECKLIST.md) phases 1–4:
+
+1. **Phase 1** — ✅ Full-page owner login (`#owner`) + landing CTAs + session chrome + scan auth redirect
+2. **Phase 2** — ✅ Owner shell: Home checklist · Import · Restaurant · Menu · Go live · Profile
+3. **Phase 3** — Guest site `/m/:slug` only (no owner chrome)
+4. **Phase 4** — Guided onboarding (scan → preview → print QR)
+
+## Later (v1 product)
 
 - [ ] Order at counter / send to kitchen
 - [ ] Payments & tips (Stripe)

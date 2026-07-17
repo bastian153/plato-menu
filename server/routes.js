@@ -55,9 +55,44 @@ async function requireRestaurant(req, res) {
   return restaurant;
 }
 
+function slugifyCategory(input) {
+  let s = String(input || "menu")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return s || "menu";
+}
+
+/** Ensure a category row exists for free-form section titles from scan/import. */
+async function ensureCategory(restaurantId, slug, label, sortOrder = 0) {
+  const safeSlug = slugifyCategory(slug || label || "menu");
+  const title = String(label || slug || "Menu").trim() || "Menu";
+  const existing = await get(
+    "SELECT id, labels_json FROM categories WHERE restaurant_id = ? AND slug = ?",
+    [restaurantId, safeSlug]
+  );
+  if (existing) return safeSlug;
+  const labels = { en: title, es: title };
+  await run(
+    `INSERT INTO categories (id, restaurant_id, slug, labels_json, sort_order) VALUES (?, ?, ?, ?, ?)`,
+    [id("cat"), restaurantId, safeSlug, JSON.stringify(labels), sortOrder]
+  );
+  return safeSlug;
+}
+
 async function insertDish(restaurantId, body, sortOrder) {
   const dishId = body.id || id("dsh");
   const name = body.name || {};
+  const catSlug = await ensureCategory(
+    restaurantId,
+    body.category || body.categorySlug || "menu",
+    body.categoryLabel || body.category || "Menu",
+    typeof body.categorySort === "number" ? body.categorySort : 0
+  );
   await run(
     `INSERT INTO dishes
      (id, restaurant_id, category_slug, price, spicy, popular, sold_out, name_json, desc_json, tags_json, allergens_json, photos_json, photo_count, sort_order)
@@ -65,7 +100,7 @@ async function insertDish(restaurantId, body, sortOrder) {
     [
       dishId,
       restaurantId,
-      body.category || "tacos",
+      catSlug,
       Number(body.price) || 0,
       Number(body.spicy) || 0,
       body.popular ? 1 : 0,
@@ -388,6 +423,44 @@ router.post("/me/restaurants", authMiddleware, async (req, res) => {
   }
 });
 
+/** Delete a restaurant the owner manages (and cascade menu data). Keeps at least one. */
+router.delete("/me/restaurants/:restaurantId", authMiddleware, async (req, res) => {
+  try {
+    const list = await listRestaurantsByOwner(req.user.id);
+    if (list.length <= 1) {
+      return res.status(400).json({
+        error: "You need at least one restaurant. Create another before deleting this one.",
+      });
+    }
+    const target = list.find((r) => r.id === req.params.restaurantId);
+    if (!target) return res.status(404).json({ error: "Restaurant not found" });
+
+    // Explicit cleanup (SQLite CASCADE is enabled; this is still safe & clear)
+    await run("DELETE FROM pending_photos WHERE restaurant_id = ?", [target.id]);
+    await run("DELETE FROM menu_events WHERE restaurant_id = ?", [target.id]);
+    await run("DELETE FROM dishes WHERE restaurant_id = ?", [target.id]);
+    await run("DELETE FROM categories WHERE restaurant_id = ?", [target.id]);
+    await run("DELETE FROM restaurants WHERE id = ? AND owner_id = ?", [
+      target.id,
+      req.user.id,
+    ]);
+
+    const remaining = await listRestaurantsByOwner(req.user.id);
+    const next = remaining[0] || null;
+    res.json({
+      ok: true,
+      deletedId: target.id,
+      restaurants: remaining,
+      restaurant: next,
+      menu: next ? await getMenuBundle(next.id) : null,
+      activeRestaurantId: next ? next.id : null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Could not delete restaurant" });
+  }
+});
+
 /* ---------- Owner menu ---------- */
 
 router.get("/me/menu", authMiddleware, async (req, res) => {
@@ -478,6 +551,18 @@ router.post("/me/dishes/bulk", authMiddleware, async (req, res) => {
     let sort = (maxRow && maxRow.m) || 0;
     const created = [];
 
+    // Pre-create sections in order (from body.sections or first-seen dish categories)
+    const sectionHints = Array.isArray(req.body.sections) ? req.body.sections : [];
+    for (let i = 0; i < sectionHints.length; i++) {
+      const sec = sectionHints[i] || {};
+      await ensureCategory(
+        restaurant.id,
+        sec.id || sec.slug || sec.title,
+        sec.title || sec.name || sec.id,
+        typeof sec.sortOrder === "number" ? sec.sortOrder : i
+      );
+    }
+
     for (const item of items.slice(0, 40)) {
       const nameStr = String(item.name || "").trim();
       if (!nameStr) continue;
@@ -499,13 +584,17 @@ router.post("/me/dishes/bulk", authMiddleware, async (req, res) => {
         }
       }
       sort += 1;
+      const catLabel = String(item.categoryLabel || item.section || item.category || "Menu").trim();
+      const catSlug = String(item.category || item.categorySlug || catLabel).trim();
       const row = await insertDish(
         restaurant.id,
         {
           name: nameMap,
           desc: descMap,
           price: item.price,
-          category: item.category || "tacos",
+          category: catSlug,
+          categoryLabel: catLabel,
+          categorySort: typeof item.categorySort === "number" ? item.categorySort : sort,
           spicy: item.spicy || 0,
         },
         sort
@@ -573,12 +662,21 @@ router.put("/me/dishes/:dishId", authMiddleware, async (req, res) => {
   if (!existing) return res.status(404).json({ error: "Dish not found" });
   const body = req.body || {};
   const photos = body.photos != null ? body.photos : JSON.parse(existing.photos_json || "[]");
+  let categorySlug = existing.category_slug;
+  if (body.category != null || body.categoryLabel != null) {
+    categorySlug = await ensureCategory(
+      restaurant.id,
+      body.category || existing.category_slug,
+      body.categoryLabel || body.category || existing.category_slug,
+      0
+    );
+  }
   await run(
     `UPDATE dishes SET category_slug=?, price=?, spicy=?, popular=?, sold_out=?,
      name_json=?, desc_json=?, tags_json=?, allergens_json=?, photos_json=?, photo_count=?, updated_at=?
      WHERE id=? AND restaurant_id=?`,
     [
-      body.category != null ? body.category : existing.category_slug,
+      categorySlug,
       body.price != null ? Number(body.price) : existing.price,
       body.spicy != null ? Number(body.spicy) : existing.spicy,
       body.popular != null ? (body.popular ? 1 : 0) : existing.popular,
@@ -618,15 +716,154 @@ router.patch("/me/dishes/:dishId/sold-out", authMiddleware, async (req, res) => 
   res.json({ dish: dishToJson(row), menu: await getMenuBundle(restaurant.id) });
 });
 
+/**
+ * Sync menu sections: rename, reorder, create empty sections.
+ * Body: { categories: [ { id|slug, title|labels, sortOrder } ] }
+ * Dish category_slug values are preserved; rename keeps the same slug by default.
+ * Pass renameFrom + id to change slug (and migrate dishes).
+ */
+router.put("/me/categories", authMiddleware, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+    const list = Array.isArray(req.body.categories) ? req.body.categories : [];
+    if (!list.length) {
+      return res.status(400).json({ error: "categories array required" });
+    }
+
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i] || {};
+      const title = String(
+        item.title ||
+          (item.labels && (item.labels.en || item.labels.es)) ||
+          item.id ||
+          item.slug ||
+          "Menu"
+      ).trim();
+      const sortOrder = typeof item.sortOrder === "number" ? item.sortOrder : i;
+      const newSlug = slugifyCategory(item.id || item.slug || title);
+      const fromSlug = item.renameFrom
+        ? slugifyCategory(item.renameFrom)
+        : newSlug;
+
+      const labels =
+        item.labels && typeof item.labels === "object"
+          ? item.labels
+          : { en: title, es: title };
+
+      // Migrate dishes if slug changed
+      if (fromSlug !== newSlug) {
+        const existingFrom = await get(
+          "SELECT id FROM categories WHERE restaurant_id = ? AND slug = ?",
+          [restaurant.id, fromSlug]
+        );
+        if (existingFrom) {
+          await run(
+            "UPDATE dishes SET category_slug = ? WHERE restaurant_id = ? AND category_slug = ?",
+            [newSlug, restaurant.id, fromSlug]
+          );
+          // Remove old category row if new slug already exists, else rename
+          const existingNew = await get(
+            "SELECT id FROM categories WHERE restaurant_id = ? AND slug = ?",
+            [restaurant.id, newSlug]
+          );
+          if (existingNew) {
+            await run(
+              "DELETE FROM categories WHERE restaurant_id = ? AND slug = ?",
+              [restaurant.id, fromSlug]
+            );
+          } else {
+            await run(
+              "UPDATE categories SET slug = ?, labels_json = ?, sort_order = ? WHERE restaurant_id = ? AND slug = ?",
+              [newSlug, JSON.stringify(labels), sortOrder, restaurant.id, fromSlug]
+            );
+            continue;
+          }
+        }
+      }
+
+      const row = await get(
+        "SELECT id FROM categories WHERE restaurant_id = ? AND slug = ?",
+        [restaurant.id, newSlug]
+      );
+      if (row) {
+        await run(
+          "UPDATE categories SET labels_json = ?, sort_order = ? WHERE restaurant_id = ? AND slug = ?",
+          [JSON.stringify(labels), sortOrder, restaurant.id, newSlug]
+        );
+      } else {
+        await run(
+          `INSERT INTO categories (id, restaurant_id, slug, labels_json, sort_order) VALUES (?, ?, ?, ?, ?)`,
+          [id("cat"), restaurant.id, newSlug, JSON.stringify(labels), sortOrder]
+        );
+      }
+    }
+
+    res.json({ ok: true, menu: await getMenuBundle(restaurant.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Could not update sections" });
+  }
+});
+
+/** Delete a section. Optional moveTo slug for dishes; otherwise dishes go to "menu". */
+router.delete("/me/categories/:slug", authMiddleware, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+    const slug = slugifyCategory(req.params.slug);
+    const moveTo = slugifyCategory(req.query.moveTo || req.body?.moveTo || "menu");
+    if (moveTo === slug) {
+      return res.status(400).json({ error: "moveTo must be a different section" });
+    }
+    await ensureCategory(restaurant.id, moveTo, moveTo === "menu" ? "Menu" : moveTo, 999);
+    await run(
+      "UPDATE dishes SET category_slug = ? WHERE restaurant_id = ? AND category_slug = ?",
+      [moveTo, restaurant.id, slug]
+    );
+    await run("DELETE FROM categories WHERE restaurant_id = ? AND slug = ?", [
+      restaurant.id,
+      slug,
+    ]);
+    res.json({ ok: true, menu: await getMenuBundle(restaurant.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Could not delete section" });
+  }
+});
+
 router.delete("/me/dishes/:dishId", authMiddleware, async (req, res) => {
   const restaurant = await requireRestaurant(req, res);
   if (!restaurant) return;
+  // Drop pending photos for this dish first
+  await run("DELETE FROM pending_photos WHERE dish_id = ? AND restaurant_id = ?", [
+    req.params.dishId,
+    restaurant.id,
+  ]);
   const result = await run("DELETE FROM dishes WHERE id = ? AND restaurant_id = ?", [
     req.params.dishId,
     restaurant.id,
   ]);
   if (!result.changes) return res.status(404).json({ error: "Dish not found" });
   res.json({ ok: true, menu: await getMenuBundle(restaurant.id) });
+});
+
+/** Clear entire menu (all dishes + pending photos). Keeps restaurant & categories. */
+router.delete("/me/menu/dishes", authMiddleware, async (req, res) => {
+  try {
+    const restaurant = await requireRestaurant(req, res);
+    if (!restaurant) return;
+    await run("DELETE FROM pending_photos WHERE restaurant_id = ?", [restaurant.id]);
+    const result = await run("DELETE FROM dishes WHERE restaurant_id = ?", [restaurant.id]);
+    res.json({
+      ok: true,
+      deleted: result.changes || 0,
+      menu: await getMenuBundle(restaurant.id),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Could not clear menu" });
+  }
 });
 
 /* ---------- Photos ---------- */
